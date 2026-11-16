@@ -57,6 +57,8 @@ class FlowTest(unittest.TestCase):
                 json={"text": "손실 함수로 오차를 계산하고 가중치를 바꿉니다."})
             self.assertEqual(opened.status_code, 200, opened.text)
             session_id = opened.json()["session_id"]
+            in_progress = client.get(f"/studies/{study['id']}").json()
+            self.assertEqual(in_progress["weeks"][0]["active_session_id"], session_id)
             question = client.post(f"/sessions/{session_id}/question")
             self.assertEqual(question.status_code, 200, question.text)
             self.assertEqual(question.json()["messages"][0]["page_no"], 1)
@@ -67,6 +69,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(done.status_code, 200, done.text)
             self.assertEqual(done.json()["status"], "finished")
             updated = client.get(f"/studies/{study['id']}").json()
+            self.assertIsNone(updated["weeks"][0]["active_session_id"])
             self.assertIn("검증 데이터를 따로 두는 이유는 무엇인가요?", updated["weeks"][1]["review"])
             self.assertEqual(len(client.get(f"/studies/{study['id']}/minutes").json()), 1)
 

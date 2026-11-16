@@ -31,8 +31,12 @@ def study_data(db, study_id):
     study = obj(required(db, "SELECT * FROM studies WHERE id=?", (study_id,)))
     study["weeks"] = [dict(r) for r in db.execute(
         "SELECT * FROM weeks WHERE study_id=? ORDER BY week_no", (study_id,))]
+    active_sessions = {r["week_no"]: r["id"] for r in db.execute(
+        "SELECT id,week_no FROM sessions WHERE study_id=? AND status='active' ORDER BY id",
+        (study_id,))}
     for week in study["weeks"]:
         week["review"] = loads(week["review"])
+        week["active_session_id"] = active_sessions.get(week["week_no"])
     study["members"] = [dict(r) for r in db.execute(
         "SELECT * FROM members WHERE study_id=? ORDER BY member_no", (study_id,))]
     return study
