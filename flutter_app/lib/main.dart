@@ -27,9 +27,9 @@ class Api {
     }
     return jsonDecode(text);
   }
-  static Future<dynamic> create(Map<String, String> fields, PlatformFile pdf) async {
+  static Future<dynamic> create(Map<String, String> fields, PlatformFile? pdf) async {
     final request = http.MultipartRequest('POST', url('/studies'))..fields.addAll(fields);
-    request.files.add(http.MultipartFile.fromBytes('pdf', pdf.bytes!, filename: pdf.name));
+    if (pdf != null) request.files.add(http.MultipartFile.fromBytes('pdf', pdf.bytes!, filename: pdf.name));
     final response = await request.send();
     final text = await response.stream.bytesToString();
     if (response.statusCode >= 400) {
@@ -50,21 +50,22 @@ class StudyMateApp extends StatelessWidget {
     theme: ThemeData(
       useMaterial3: true,
       fontFamily: 'NotoSansKR',
-      scaffoldBackgroundColor: const Color(0xFFF6F8FC),
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2452A6), surface: Colors.white),
-      appBarTheme: const AppBarTheme(backgroundColor: Color(0xFFF6F8FC),
+      scaffoldBackgroundColor: const Color(0xFFF8FAFF),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3F7FF3), surface: Colors.white),
+      appBarTheme: const AppBarTheme(backgroundColor: Color(0xFFF8FAFF),
         surfaceTintColor: Colors.transparent, centerTitle: false,
-        titleTextStyle: TextStyle(fontFamily: 'NotoSansKR', fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1B2740))),
+        titleTextStyle: TextStyle(fontFamily: 'NotoSansKR', fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF0B1B43))),
       cardTheme: CardThemeData(color: Colors.white, elevation: 0,
         margin: const EdgeInsets.symmetric(vertical: 6),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18),
-          side: const BorderSide(color: Color(0xFFE4EAF3)))),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFFE6ECF6)))),
       inputDecorationTheme: InputDecorationTheme(
         filled: true, fillColor: Colors.white, contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFDCE4EF))),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFDCE4EF)))),
       filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
+        backgroundColor: const Color(0xFF3F7FF3), foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))),
       outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
     ),
@@ -76,7 +77,7 @@ class PageContent extends StatelessWidget {
   final List<Widget> children;
   const PageContent({super.key, required this.children});
   @override Widget build(BuildContext context) => Center(child: ConstrainedBox(
-    constraints: const BoxConstraints(maxWidth: 760),
+    constraints: const BoxConstraints(maxWidth: 640),
     child: ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 100), children: children)));
 }
 
@@ -93,33 +94,49 @@ class SectionTitle extends StatelessWidget {
 
 class SoftPanel extends StatelessWidget {
   final Widget child;
-  const SoftPanel({super.key, required this.child});
-  @override Widget build(BuildContext context) => Card(child: Padding(
-    padding: const EdgeInsets.all(18), child: child));
+  final Color? color;
+  const SoftPanel({super.key, required this.child, this.color});
+  @override Widget build(BuildContext context) => Card(color: color,
+    child: Padding(padding: const EdgeInsets.all(18), child: child));
 }
+
+const peerNames = ['지식이', '사례이', '융합이', '탐구이'];
+const peerTints = [Color(0xFFEAF2FF), Color(0xFFFFEDF4), Color(0xFFE8F8F0), Color(0xFFF2ECFF)];
+const peerAccents = [Color(0xFF3F7FF3), Color(0xFFEF6B9A), Color(0xFF37B77D), Color(0xFF9069DA)];
+String peerLabel(int number) => peerNames[(number - 1) % peerNames.length];
+Color peerTint(int number) => peerTints[(number - 1) % peerTints.length];
+Color peerAccent(int number) => peerAccents[(number - 1) % peerAccents.length];
 
 class ChatBubble extends StatelessWidget {
   final String name;
   final String text;
   final bool mine;
   final String? caption;
-  const ChatBubble({super.key, required this.name, required this.text, required this.mine, this.caption});
+  final int? peerNo;
+  const ChatBubble({super.key, required this.name, required this.text, required this.mine, this.caption, this.peerNo});
   @override Widget build(BuildContext context) => Align(
     alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-    child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 560),
-      child: Padding(padding: const EdgeInsets.symmetric(vertical: 7), child: Column(
-        crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          Padding(padding: const EdgeInsets.fromLTRB(5, 0, 5, 5),
-            child: Text(name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF324452)))),
-          DecoratedBox(decoration: BoxDecoration(
-            color: mine ? const Color(0xFFFEE500) : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: const [BoxShadow(color: Color(0x18000000), blurRadius: 3, offset: Offset(0, 1))]),
-            child: Padding(padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
-              child: Text(text, style: const TextStyle(color: Color(0xFF1C2430), height: 1.48)))),
-          if (caption != null) Padding(padding: const EdgeInsets.fromLTRB(5, 5, 5, 0),
-            child: Text(caption!, style: const TextStyle(fontSize: 11, color: Color(0xFF41596C)))),
+    child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 510),
+      child: Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Row(
+        mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (!mine) ...[
+            CircleAvatar(radius: 18, backgroundColor: peerTint(peerNo ?? 1),
+              child: Icon(Icons.smart_toy_rounded, size: 20, color: peerAccent(peerNo ?? 1))),
+            const SizedBox(width: 8),
+          ],
+          Flexible(child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              Padding(padding: const EdgeInsets.fromLTRB(5, 0, 5, 5),
+                child: Text(name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                  color: mine ? const Color(0xFF536887) : peerAccent(peerNo ?? 1)))),
+              DecoratedBox(decoration: BoxDecoration(
+                color: mine ? const Color(0xFFDDEBFF) : peerTint(peerNo ?? 1),
+                borderRadius: BorderRadius.circular(16)),
+                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+                  child: Text(text, style: const TextStyle(color: Color(0xFF1C2430), height: 1.48)))),
+              if (caption != null) Padding(padding: const EdgeInsets.fromLTRB(5, 5, 5, 0),
+                child: Text(caption!, style: const TextStyle(fontSize: 11, color: Color(0xFF536887)))),
+            ])),
         ]))));
 }
 
@@ -167,21 +184,23 @@ class _HomePageState extends State<HomePage> {
   @override Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('AI 스터디메이트')),
     body: PageContent(children: [
-      SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.auto_stories_rounded, size: 30, color: Color(0xFF2452A6)),
+      SoftPanel(color: const Color(0xFFEAF3FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const CircleAvatar(radius: 28, backgroundColor: Color(0xFFD4E6FF),
+          child: Icon(Icons.smart_toy_rounded, size: 30, color: Color(0xFF3F7FF3))),
         const SizedBox(height: 14),
-        Text('교안에서 시작하는 스터디', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+        Text('혼자보다 함께, 더 오래 공부해요',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: const Color(0xFF0B1B43))),
         const SizedBox(height: 8),
-        Text('계획을 세우고 발표한 뒤, AI 동료와 질문을 나눠보세요.',
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        const Text('주제만 적어도 시작할 수 있어요. AI 친구들이 질문하며 함께 공부해요.',
+          style: TextStyle(color: Color(0xFF536887))),
         const SizedBox(height: 18),
         FilledButton.icon(onPressed: openCreate,
-          icon: const Icon(Icons.add), label: const Text('새 스터디 만들기')),
+          icon: const Icon(Icons.add), label: const Text('새 스터디 시작')),
       ])),
       if (demoMode) const Padding(padding: EdgeInsets.fromLTRB(4, 12, 4, 0),
         child: Text('시연 모드 · 질문과 요약은 규칙 기반 예시입니다.', style: TextStyle(color: Color(0xFF64748B), fontSize: 13))),
       const SectionTitle('이렇게 진행해요'),
-      const SoftPanel(child: Text('① PDF 교안 등록  →  ② 주간 계획 확인  →  ③ 랩미팅에서 질문·답변')),
+      const SoftPanel(child: Text('① 주제 정하기  →  ② 주간 계획 확인  →  ③ AI 친구들과 대화')),
       if (loading) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
       if (loadError != null) SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(loadError!), const SizedBox(height: 12),
@@ -189,12 +208,13 @@ class _HomePageState extends State<HomePage> {
       ])),
       SectionTitle('내 스터디', detail: '${studies.length}개'),
       if (!loading && loadError == null && studies.isEmpty)
-        const SoftPanel(child: Text('아직 스터디가 없습니다. PDF 교안을 올려 시작해 보세요.')),
+        const SoftPanel(child: Text('아직 스터디가 없어요. 주제와 목표를 적어 첫 스터디를 시작해 보세요.')),
       ...studies.map((s) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        leading: const CircleAvatar(backgroundColor: Color(0xFFEAF1FF), child: Icon(Icons.menu_book_rounded, color: Color(0xFF2452A6))),
+        leading: const CircleAvatar(backgroundColor: Color(0xFFEAF2FF),
+          child: Icon(Icons.smart_toy_rounded, color: Color(0xFF3F7FF3))),
         title: Text(s['title'], style: const TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Padding(padding: const EdgeInsets.only(top: 5), child: Text(s['goal'], maxLines: 2, overflow: TextOverflow.ellipsis)),
-        trailing: const Icon(Icons.chevron_right), onTap: () => Navigator.push(context,
+        trailing: const Icon(Icons.chevron_right_rounded), onTap: () => Navigator.push(context,
           MaterialPageRoute(builder: (_) => StudyPage(id: s['id']))).then((_) => refresh())))),
     ]),
   );
@@ -209,10 +229,17 @@ class _CreatePageState extends State<CreatePage> {
   final title = TextEditingController(), goal = TextEditingController(), weeks = TextEditingController(text: '4'),
       hours = TextEditingController(text: '3'), members = TextEditingController(text: '3');
   DateTime start = DateTime.now();
+  final peerUnderstanding = [
+    TextEditingController(text: '핵심 용어는 조금 알지만 정의와 원리를 다시 확인하고 싶다.'),
+    TextEditingController(text: '개념은 들었지만 실제 사례에 적용하는 방법이 아직 헷갈린다.'),
+    TextEditingController(text: '기본 원리를 알고 있어 이전 내용과의 연결을 궁금해한다.'),
+    TextEditingController(text: '여러 설명을 비교할 수 있지만 다른 해석의 근거를 확인하고 싶다.'),
+  ];
+  final peerLevels = ['기초', '중급', '심화', '중급'];
   PlatformFile? pdf;
   bool busy = false;
   String? pdfError;
-  @override void dispose() { for (final c in [title, goal, weeks, hours, members]) { c.dispose(); } super.dispose(); }
+  @override void dispose() { for (final c in [title, goal, weeks, hours, members, ...peerUnderstanding]) { c.dispose(); } super.dispose(); }
   String? requiredField(String? value) => (value?.trim().isEmpty ?? true) ? '내용을 입력해 주세요.' : null;
   String? numberField(String? value, num min, num max, String label) {
     final number = num.tryParse(value?.trim() ?? '');
@@ -222,50 +249,92 @@ class _CreatePageState extends State<CreatePage> {
   }
   Future<void> submit() async {
     final validFields = formKey.currentState!.validate();
-    setState(() { pdfError = pdf == null ? 'PDF 교안을 선택해 주세요.'
-      : pdf!.size > 10000000 ? '10MB 이하의 PDF를 선택해 주세요.' : null; });
+    setState(() { pdfError = pdf != null && pdf!.size > 10000000 ? '10MB 이하의 PDF를 선택해 주세요.' : null; });
     if (!validFields || pdfError != null) return;
     setState(() => busy = true);
     try {
       final date = '${start.year}-${start.month.toString().padLeft(2,'0')}-${start.day.toString().padLeft(2,'0')}';
+      final memberCount = int.parse(members.text.trim());
+      final profiles = List.generate(memberCount, (i) => {
+        'level': peerLevels[i], 'understanding': peerUnderstanding[i].text.trim(),
+      });
       final study = await Api.create({'title': title.text.trim(), 'goal': goal.text.trim(), 'start_date': date,
-        'weeks': weeks.text.trim(), 'hours_per_week': hours.text.trim(), 'member_count': members.text.trim()}, pdf!);
+        'weeks': weeks.text.trim(), 'hours_per_week': hours.text.trim(), 'member_count': members.text.trim(),
+        'member_profiles': jsonEncode(profiles)}, pdf);
       if (mounted) Navigator.pop(context, study['id']);
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
   }
   @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('새 스터디')),
     body: Form(key: formKey, child: PageContent(children: [
-      const SoftPanel(child: Text('PDF 교안을 올리면 주차별 학습 범위를 자동으로 나눠드려요. 계획은 나중에 수정할 수 있습니다.')),
+      const SoftPanel(color: Color(0xFFEAF3FF), child: Row(children: [
+        CircleAvatar(radius: 25, backgroundColor: Color(0xFFD4E6FF),
+          child: Icon(Icons.auto_stories_rounded, color: Color(0xFF3F7FF3))),
+        SizedBox(width: 14),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('나만의 AI 스터디를 시작해요', style: TextStyle(fontWeight: FontWeight.w700)),
+          SizedBox(height: 4),
+          Text('주제만 있어도 괜찮아요. AI 친구들이 함께할게요.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF536887))),
+        ])),
+      ])),
       const SectionTitle('기본 정보'),
       TextFormField(controller: title, validator: requiredField,
-        decoration: const InputDecoration(labelText: '스터디 이름', hintText: '예: 신경망 기초 공부')),
+        decoration: const InputDecoration(prefixIcon: Icon(Icons.bookmark_outline),
+          labelText: '학습 주제', hintText: '예: 신경망 기초 공부')),
       const SizedBox(height: 12),
       TextFormField(controller: goal, validator: requiredField,
-        decoration: const InputDecoration(labelText: '학습 목표', hintText: '예: 손실 함수와 학습 과정을 설명하기')),
+        decoration: const InputDecoration(prefixIcon: Icon(Icons.flag_outlined),
+          labelText: '학습 목표', hintText: '예: 손실 함수와 학습 과정을 설명하기')),
       const SectionTitle('학습 일정'),
       TextFormField(controller: weeks, keyboardType: TextInputType.number,
         validator: (v) => numberField(v, 1, 26, '학습 주수'),
-        decoration: const InputDecoration(labelText: '학습 주수 (1~26)')),
+        decoration: const InputDecoration(prefixIcon: Icon(Icons.calendar_today_outlined),
+          labelText: '학습 주수 (1~26)')),
       const SizedBox(height: 12),
       TextFormField(controller: hours, keyboardType: const TextInputType.numberWithOptions(decimal: true),
         validator: (v) => numberField(v, 0.5, 80, '주당 학습 시간'),
-        decoration: const InputDecoration(labelText: '주당 학습 시간 (0.5~80)')),
+        decoration: const InputDecoration(prefixIcon: Icon(Icons.schedule_outlined),
+          labelText: '주당 학습 시간 (0.5~80)')),
       const SizedBox(height: 12),
       TextFormField(controller: members, keyboardType: TextInputType.number,
+        onChanged: (_) => setState(() {}),
         validator: (v) => numberField(v, 1, 4, 'AI 스터디원 수'),
-        decoration: const InputDecoration(labelText: 'AI 스터디원 수 (1~4)')),
+        decoration: const InputDecoration(prefixIcon: Icon(Icons.groups_outlined),
+          labelText: 'AI 스터디원 수 (1~4)')),
+      const SectionTitle('함께할 AI 친구들'),
+      ...List.generate((int.tryParse(members.text.trim()) ?? 3).clamp(1, 4), (i) =>
+        SoftPanel(color: peerTint(i + 1), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            CircleAvatar(backgroundColor: Colors.white, child: Icon(Icons.smart_toy_rounded, color: peerAccent(i + 1))),
+            const SizedBox(width: 10),
+            Expanded(child: Text(peerLabel(i + 1), style: const TextStyle(fontWeight: FontWeight.w700))),
+            DropdownButton<String>(value: peerLevels[i], underline: const SizedBox.shrink(),
+              items: ['기초', '중급', '심화'].map((level) => DropdownMenuItem(value: level, child: Text(level))).toList(),
+              onChanged: (value) => setState(() => peerLevels[i] = value ?? peerLevels[i])),
+          ]),
+          const SizedBox(height: 8),
+          TextFormField(controller: peerUnderstanding[i], maxLength: 500,
+            decoration: const InputDecoration(labelText: '지금 이해한 내용이나 헷갈리는 부분')),
+        ]))),
       const SizedBox(height: 12),
-      Card(child: ListTile(title: Text('시작일  ${start.year}-${start.month}-${start.day}'), trailing: const Icon(Icons.date_range),
+      Card(child: ListTile(leading: const Icon(Icons.event_outlined, color: Color(0xFF3F7FF3)),
+        title: Text('시작일  ${start.year}-${start.month}-${start.day}'), trailing: const Icon(Icons.chevron_right),
         onTap: () async { final d = await showDatePicker(context: context, initialDate: start,
           firstDate: DateTime(2020), lastDate: DateTime(2100)); if (d != null) setState(() => start = d); })),
-      const SectionTitle('교안'),
-      Card(child: ListTile(title: Text(pdf?.name ?? 'PDF 교안 선택'),
-        subtitle: const Text('텍스트를 읽을 수 있는 PDF · 10MB 이하 · 100쪽 이하'),
-        trailing: const Icon(Icons.upload_file), onTap: busy ? null : () async {
+      const SectionTitle('PDF 교안 · 선택사항'),
+      Card(child: ListTile(title: Text(pdf?.name ?? '교안 없이 시작하기'),
+        subtitle: Text(pdf == null ? '파일이 있다면 눌러서 추가하세요.' : '다른 PDF를 고르려면 눌러 주세요.'),
+        trailing: pdf == null ? const Icon(Icons.add_circle_outline) : IconButton(
+          tooltip: 'PDF 빼기', icon: const Icon(Icons.close),
+          onPressed: busy ? null : () => setState(() { pdf = null; pdfError = null; })),
+        onTap: busy ? null : () async {
         final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
         if (picked != null && mounted) setState(() { pdf = picked.files.single; pdfError = null; });
       })),
+      const Padding(padding: EdgeInsets.fromLTRB(8, 4, 8, 0),
+        child: Text('PDF는 10MB·100쪽 이하, 텍스트를 읽을 수 있는 파일만 지원해요.',
+          style: TextStyle(color: Color(0xFF777777), fontSize: 12))),
       if (pdfError != null) Padding(padding: const EdgeInsets.fromLTRB(12, 4, 0, 0),
         child: Text(pdfError!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
       const SizedBox(height: 20), FilledButton(onPressed: busy ? null : submit, child: Text(busy ? '저장 중...' : '스터디 생성')),
@@ -281,12 +350,21 @@ class _StudyPageState extends State<StudyPage> {
   Map<String, dynamic>? study;
   List<dynamic> minutes = [];
   bool busy = false;
+  int selectedWeek = 1;
   @override void initState() { super.initState(); refresh(); }
   Future<void> refresh() async {
     try {
       final data = await Api.request('GET', '/studies/${widget.id}');
       final records = await Api.request('GET', '/studies/${widget.id}/minutes');
-      if (mounted) setState(() { study = data; minutes = records; });
+      if (mounted) {
+        setState(() {
+          if (study == null) {
+            final weeks = data['weeks'] as List;
+            selectedWeek = (weeks.firstWhere((w) => w['status'] != 'complete', orElse: () => weeks.first))['week_no'];
+          }
+          study = data; minutes = records;
+        });
+      }
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
   Future<void> draft([bool replan = false]) async {
@@ -312,45 +390,94 @@ class _StudyPageState extends State<StudyPage> {
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
   }
-  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: Text(study?['title'] ?? '스터디')),
-    body: study == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
-      SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(study!['goal'], style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 12),
-        Text('교안 · ${study!['pdf_name']}', style: const TextStyle(color: Color(0xFF64748B))),
-        const SizedBox(height: 16),
-        Text('${(study!['weeks'] as List).where((w) => w['status'] == 'complete').length} / ${(study!['weeks'] as List).length}주 완료'),
-        const SizedBox(height: 7),
-        LinearProgressIndicator(value: (study!['weeks'] as List).where((w) => w['status'] == 'complete').length /
-          (study!['weeks'] as List).length, minHeight: 7, borderRadius: BorderRadius.circular(8)),
-      ])),
-      const SectionTitle('학습 계획'),
-      Wrap(spacing: 10, runSpacing: 8, children: [
-        FilledButton.icon(onPressed: busy ? null : () => draft(), icon: const Icon(Icons.auto_awesome),
-          label: Text(busy ? '계획 생성 중...' : 'AI 주간 계획 제안')),
-        OutlinedButton(onPressed: busy ? null : () => draft(true), child: const Text('남은 일정 변경안')),
-      ]),
-      SectionTitle('주간 계획', detail: '주차를 눌러 발표를 시작하세요'),
-      ...(study!['weeks'] as List).map((w) => Card(child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        title: Text(w['title'].toString().trim() == '${w['week_no']}주차'
-          ? '${w['title']}' : '${w['week_no']}주차  ${w['title']}',
-          style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Padding(padding: const EdgeInsets.only(top: 7), child:
-          Text('${weekStatusLabel(w['status'])} · ${w['scope']}\n랩미팅 ${w['meeting_date']}${(w['review'] as List).isEmpty ? '' : ' · 복습 ${(w['review'] as List).join(', ')}'}')),
-        isThreeLine: true,
-        trailing: Icon(w['active_session_id'] == null ? Icons.chevron_right : Icons.play_circle_outline),
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => WeekPage(studyId: widget.id, week: Map<String,dynamic>.from(w)))).then((_) => refresh()),
-      ))),
-      SectionTitle('회의록', detail: '${minutes.length}개'),
-      if (minutes.isEmpty) const SoftPanel(child: Text('랩미팅을 마치면 회의록이 여기에 모입니다.')),
-      ...minutes.map((m) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        title: Text('${m['week_no']}주차 회의록', style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Padding(padding: const EdgeInsets.only(top: 6), child:
-          Text('${m['minutes']['summary']}', maxLines: 2, overflow: TextOverflow.ellipsis)),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SessionPage(id: m['session_id'])))))),
-    ]));
+  @override Widget build(BuildContext context) {
+    final weeks = (study?['weeks'] as List?) ?? [];
+    final current = weeks.isEmpty ? null : weeks.firstWhere((w) => w['week_no'] == selectedWeek,
+      orElse: () => weeks.first);
+    final completed = weeks.where((w) => w['status'] == 'complete').length;
+    return Scaffold(appBar: AppBar(title: Text(study?['title'] ?? '스터디')),
+      body: study == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
+        SoftPanel(color: const Color(0xFFEAF3FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(study!['goal'], style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Text((study!['pdf_name'] as String).isEmpty ? 'PDF 없이 자유롭게 공부 중' : '교안 · ${study!['pdf_name']}',
+            style: const TextStyle(color: Color(0xFF536887))),
+          const SizedBox(height: 16),
+          Text('$completed / ${weeks.length}주 완료', style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 7),
+          LinearProgressIndicator(value: completed / weeks.length, minHeight: 8,
+            borderRadius: BorderRadius.circular(8), backgroundColor: const Color(0xFFD9E5F7)),
+        ])),
+        const SectionTitle('주간 학습'),
+        SizedBox(height: 64, child: ListView(scrollDirection: Axis.horizontal, children: weeks.map((w) {
+          final selected = w['week_no'] == selectedWeek;
+          return Padding(padding: const EdgeInsets.only(right: 8), child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => setState(() => selectedWeek = w['week_no']),
+            child: Container(width: 92, padding: const EdgeInsets.symmetric(vertical: 9),
+              decoration: BoxDecoration(color: selected ? const Color(0xFF3F7FF3) : const Color(0xFFEFF4FC),
+                borderRadius: BorderRadius.circular(14)),
+              child: Column(children: [
+                Text('${w['week_no']}주차', style: TextStyle(fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : const Color(0xFF273957))),
+                const SizedBox(height: 3),
+                Text(weekStatusLabel(w['status']), style: TextStyle(fontSize: 11,
+                  color: selected ? Colors.white70 : const Color(0xFF7585A0))),
+              ]))));
+        }).toList())),
+        if (current != null) SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const CircleAvatar(backgroundColor: Color(0xFFEAF2FF),
+              child: Icon(Icons.menu_book_rounded, color: Color(0xFF3F7FF3))),
+            const SizedBox(width: 12),
+            Expanded(child: Text('${current['title']}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
+          ]),
+          const SizedBox(height: 18),
+          const Text('이번 주 공부할 내용', style: TextStyle(color: Color(0xFF536887), fontSize: 12)),
+          const SizedBox(height: 5), Text('${current['scope']}'),
+          if ((current['progress_percent'] as int) > 0) ...[
+            const SizedBox(height: 12),
+            Text('학습 진행률 ${current['progress_percent']}%', style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 5),
+            LinearProgressIndicator(value: (current['progress_percent'] as int) / 100,
+              minHeight: 7, borderRadius: BorderRadius.circular(7)),
+          ],
+          if ((current['remaining_scope'] as String).isNotEmpty) ...[
+            const SizedBox(height: 8), Text('남은 내용 · ${current['remaining_scope']}',
+              style: const TextStyle(color: Color(0xFFB15E38))),
+          ],
+          const SizedBox(height: 10), Text('랩미팅 · ${current['meeting_date']}',
+            style: const TextStyle(color: Color(0xFF536887), fontSize: 12)),
+          if ((current['review'] as List).isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Container(width: double.infinity, padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFFFFF5E5), borderRadius: BorderRadius.circular(12)),
+              child: Text('지난주 복습 · ${(current['review'] as List).join(', ')}')),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(width: double.infinity, child: FilledButton.icon(
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => WeekPage(
+              studyId: widget.id, week: Map<String,dynamic>.from(current)))).then((_) => refresh()),
+            icon: const Icon(Icons.arrow_forward_rounded),
+            label: Text(current['active_session_id'] == null ? '이번 주 학습 열기' : '대화 이어하기'))),
+        ])),
+        const SectionTitle('학습 계획 조정'),
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          OutlinedButton.icon(onPressed: busy ? null : () => draft(), icon: const Icon(Icons.auto_awesome),
+            label: Text(busy ? '계획 생성 중...' : 'AI 계획 제안')),
+          OutlinedButton(onPressed: busy ? null : () => draft(true), child: const Text('남은 일정 다시 짜기')),
+        ]),
+        SectionTitle('지난 회의록', detail: '${minutes.length}개'),
+        if (minutes.isEmpty) const SoftPanel(child: Text('랩미팅을 마치면 대화 기록이 여기에 모여요.')),
+        ...minutes.map((m) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          leading: const CircleAvatar(backgroundColor: Color(0xFFEAF2FF),
+            child: Icon(Icons.description_outlined, color: Color(0xFF3F7FF3))),
+          title: Text('${m['week_no']}주차 회의록', style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Text('${m['minutes']['summary']}', maxLines: 2, overflow: TextOverflow.ellipsis),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SessionPage(id: m['session_id'])))))),
+      ]));
+  }
 }
 
 class WeekPage extends StatefulWidget {
@@ -362,16 +489,22 @@ class WeekPage extends StatefulWidget {
 class _WeekPageState extends State<WeekPage> {
   late final title = TextEditingController(text: widget.week['title']);
   late final scope = TextEditingController(text: widget.week['scope']);
+  late final remainingScope = TextEditingController(text: widget.week['remaining_scope'] ?? '');
+  late double progress = (widget.week['progress_percent'] as int? ?? 0).toDouble();
+  late DateTime meetingDate = DateTime.parse(widget.week['meeting_date']);
   final note = TextEditingController();
   bool busy = false;
-  @override void dispose() { title.dispose(); scope.dispose(); note.dispose(); super.dispose(); }
+  @override void dispose() { title.dispose(); scope.dispose(); remainingScope.dispose(); note.dispose(); super.dispose(); }
   Future<void> save() async {
     if (title.text.trim().isEmpty || scope.text.trim().isEmpty) {
       errorMessage(context, '주차 목표와 교안 범위를 입력해 주세요.'); return;
     }
     setState(() => busy = true);
     try { await Api.request('PUT', '/studies/${widget.studyId}/weeks/${widget.week['week_no']}', {
-      'title': title.text.trim(), 'scope': scope.text.trim(), 'meeting_date': widget.week['meeting_date'], 'status': widget.week['status']});
+      'title': title.text.trim(), 'scope': scope.text.trim(),
+      'meeting_date': '${meetingDate.year}-${meetingDate.month.toString().padLeft(2, '0')}-${meetingDate.day.toString().padLeft(2, '0')}',
+      'status': widget.week['status'], 'progress_percent': progress.round(),
+      'remaining_scope': remainingScope.text.trim()});
       if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('저장했습니다.'))); Navigator.pop(context); }
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
@@ -389,12 +522,29 @@ class _WeekPageState extends State<WeekPage> {
   @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: Text('${widget.week['week_no']}주차')),
     body: PageContent(children: [
       const SectionTitle('이번 주 계획'),
-      TextField(controller: title, decoration: const InputDecoration(labelText: '주차 목표')),
+      TextField(controller: title, decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.flag_outlined), labelText: '이번 주 목표')),
       const SizedBox(height: 12),
-      TextField(controller: scope, decoration: const InputDecoration(labelText: '교안 범위 (예: 1~8쪽)')),
+      TextField(controller: scope, decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.menu_book_outlined), labelText: '이번 주 학습 범위',
+        hintText: '예: 핵심 개념 또는 교안 1~8쪽')),
       const SizedBox(height: 12),
       SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('랩미팅 · ${widget.week['meeting_date']}'),
+        Text('지금까지 공부한 정도 · ${progress.round()}%', style: const TextStyle(fontWeight: FontWeight.w700)),
+        Slider(value: progress, min: 0, max: 100, divisions: 20,
+          onChanged: widget.week['status'] == 'complete' ? null : (value) => setState(() => progress = value)),
+        TextField(controller: remainingScope, enabled: widget.week['status'] != 'complete',
+          decoration: const InputDecoration(labelText: '아직 못 공부한 내용',
+            hintText: '예: 3장 실습, 검증 데이터 개념')),
+      ])),
+      const SizedBox(height: 12),
+      SoftPanel(color: const Color(0xFFF1F7FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.event_outlined),
+          title: Text('랩미팅 · ${meetingDate.year}-${meetingDate.month}-${meetingDate.day}'),
+          trailing: const Icon(Icons.edit_calendar_outlined),
+          onTap: () async { final selected = await showDatePicker(context: context,
+            initialDate: meetingDate, firstDate: DateTime(2020), lastDate: DateTime(2100));
+            if (selected != null) setState(() => meetingDate = selected); }),
         if ((widget.week['review'] as List).isNotEmpty) ...[
           const SizedBox(height: 6),
           Text('이전 주 복습 · ${(widget.week['review'] as List).join(', ')}'),
@@ -409,9 +559,16 @@ class _WeekPageState extends State<WeekPage> {
           icon: const Icon(Icons.chat_bubble_outline), label: const Text('대화 이어하기')),
       ] else ...[
         SectionTitle(widget.week['status'] == 'complete' ? '다시 발표하기' : '내 발표 준비'),
-        const SoftPanel(child: Text('공부한 내용을 먼저 내 말로 설명해 보세요. AI 스터디원이 질문하며 함께 정리해 줍니다.')),
+        const SoftPanel(color: Color(0xFFEAF3FF), child: Text('공부한 내용을 먼저 내 말로 설명해 보세요. AI 친구들이 질문하며 함께 정리해 줍니다.')),
+        const Wrap(spacing: 6, runSpacing: 4, children: [
+          Chip(label: Text('핵심 개념')),
+          Chip(label: Text('작동 방식')),
+          Chip(label: Text('내가 생각한 예시')),
+          Chip(label: Text('헷갈리는 부분')),
+        ]),
+        const SizedBox(height: 8),
         TextField(controller: note, maxLines: 8, maxLength: 12000, decoration: const InputDecoration(
-          labelText: '내 학습 정리 / 발표문', hintText: '핵심 개념, 이해한 방식, 예시, 헷갈리는 점을 적어 보세요.')),
+          labelText: '내 학습 정리 / 발표문', hintText: '배운 내용을 자유롭게 적어 보세요. 위 항목을 참고해도 좋아요.')),
         const SizedBox(height: 12), FilledButton.icon(onPressed: busy ? null : start,
           icon: const Icon(Icons.chat_bubble_outline), label: Text(busy ? '시작 중...' : '대화 시작하기')),
       ],
@@ -476,29 +633,52 @@ class _SessionPageState extends State<SessionPage> {
   @override Widget build(BuildContext context) {
     final s = session;
     final messages = (s?['messages'] as List?) ?? [];
-    final awaiting = messages.isNotEmpty && messages.last['role'] == 'assistant';
+    final members = (s?['members'] as List?) ?? [];
+    final awaiting = messages.isNotEmpty &&
+      (messages.last['role'] == 'assistant' || messages.last['role'] == 'assistant_hint');
     final finished = s != null && s['status'] != 'active';
     final minutes = finished ? jsonDecode(s['minutes'] as String) as Map<String, dynamic> : null;
     final checks = (minutes?['next_checks'] as List?) ?? [];
     return Scaffold(
-      backgroundColor: const Color(0xFFB7C9D7),
-      appBar: AppBar(backgroundColor: const Color(0xFFB7C9D7),
+      backgroundColor: const Color(0xFFF8FAFF),
+      appBar: AppBar(backgroundColor: const Color(0xFFF8FAFF),
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${s?['week_no'] ?? ''}주차 랩미팅', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           Text(finished ? '대화가 끝났어요' : 'AI 스터디원과 함께 공부 중',
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400)),
         ])),
       body: s == null ? const Center(child: CircularProgressIndicator()) : Center(
-        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760), child: Column(children: [
+        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: Column(children: [
           Expanded(child: ListView(controller: scrollController,
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 28), children: [
+            if (members.isNotEmpty) ...[
+              const Text('함께 공부하는 AI 친구들', style: TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 10),
+              SizedBox(height: 105, child: ListView(scrollDirection: Axis.horizontal, children: members.map((m) {
+                final number = m['member_no'] as int;
+                return Container(width: 128, margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: peerTint(number), borderRadius: BorderRadius.circular(18)),
+                  child: Column(children: [
+                    CircleAvatar(radius: 20, backgroundColor: Colors.white,
+                      child: Icon(Icons.smart_toy_rounded, color: peerAccent(number))),
+                    const SizedBox(height: 5),
+                    Text(peerLabel(number), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                    Text('${m['perspective']}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10, color: Color(0xFF536887))),
+                  ]));
+              }).toList())),
+              const SizedBox(height: 18),
+            ],
             Center(child: Padding(padding: const EdgeInsets.only(bottom: 16),
               child: Text('내 발표에서 시작된 대화예요',
                 style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)))),
             ChatBubble(name: '나 · 첫 발표', text: s['initial_note'], mine: true),
             ...messages.map((m) => ChatBubble(
-              name: m['role'] == 'assistant' ? 'AI 스터디원 ${m['member_no']}' : '나',
-              text: '${m['body']}', mine: m['role'] != 'assistant',
+              name: m['role'] == 'assistant_hint' ? '${peerLabel(m['member_no'] as int)} · 힌트'
+                : m['role'] == 'assistant' ? peerLabel(m['member_no'] as int) : '나',
+              text: '${m['body']}', mine: m['role'] == 'user',
+              peerNo: m['role'] == 'user' ? null : m['member_no'] as int,
               caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽 참고')),
             if (messages.isEmpty) const Center(child: Padding(
               padding: EdgeInsets.all(18), child: Text('아래에서 질문을 받아 대화를 시작해 보세요.'))),
@@ -520,19 +700,23 @@ class _SessionPageState extends State<SessionPage> {
             ],
           ])),
           if (busy) const LinearProgressIndicator(minHeight: 3),
-          SafeArea(top: false, child: Container(color: const Color(0xFFF8FAFC),
+          SafeArea(top: false, child: Container(color: Colors.white,
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 12), child: Column(
               mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 if (finished) FilledButton(onPressed: () => Navigator.pop(context),
                   child: const Text('스터디로 돌아가기'))
                 else if (awaiting) ...[
+                  if (messages.last['role'] == 'assistant')
+                    Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+                      onPressed: busy ? null : () => act('explain'),
+                      icon: const Icon(Icons.lightbulb_outline), label: const Text('설명이나 힌트 부탁하기'))),
                   Row(children: [
                     Expanded(child: TextField(controller: answer, minLines: 1, maxLines: 3,
                       decoration: const InputDecoration(hintText: '여기에 답변을 적어 보세요.'))),
                     const SizedBox(width: 8),
                     IconButton.filled(onPressed: busy ? null : sendAnswer,
-                      style: IconButton.styleFrom(backgroundColor: const Color(0xFFFEE500),
-                        foregroundColor: const Color(0xFF191919)),
+                      style: IconButton.styleFrom(backgroundColor: const Color(0xFF3F7FF3),
+                        foregroundColor: Colors.white),
                       icon: const Icon(Icons.send_rounded), tooltip: '답변 보내기'),
                   ]),
                   Row(children: [
@@ -541,8 +725,6 @@ class _SessionPageState extends State<SessionPage> {
                   ]),
                 ] else ...[
                   FilledButton.icon(onPressed: busy ? null : () => act('question'),
-                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFEE500),
-                      foregroundColor: const Color(0xFF191919)),
                     icon: const Icon(Icons.chat_bubble_outline), label: const Text('질문 받아보기')),
                   TextButton(onPressed: busy ? null : finish, child: const Text('대화 정리하고 회의록 만들기')),
                 ],

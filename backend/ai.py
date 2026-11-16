@@ -41,6 +41,11 @@ async def generate_json(instructions: str, payload: dict) -> dict:
 
 def demo_response(instructions: str, payload: dict) -> dict:
     """Predictable offline responses for an API-key-free live demonstration."""
+    if "교안 기반 설명" in instructions:
+        pages = payload["source_pages"]
+        return {"explanation": "질문에 나온 개념을 내 말로 정의하고, 한 가지 예시와 연결해 보세요. 교안의 관련 부분을 다시 확인하면 도움이 됩니다." if pages else
+                "질문에 나온 개념을 내 말로 정의하고, 한 가지 예시와 연결해 보세요.",
+                "page_no": pages[0]["page_no"] if pages else None}
     if "랩미팅 회의록" in instructions:
         questions = [m["body"] for m in payload["messages"] if m["role"] == "assistant"]
         return {"summary": f"처음 발표와 다시 정리한 설명을 비교했다. 질문 {len(questions)}개를 논의했다.",
