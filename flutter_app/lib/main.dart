@@ -457,7 +457,8 @@ class _StudyPageState extends State<StudyPage> {
           const SizedBox(height: 16),
           SizedBox(width: double.infinity, child: FilledButton.icon(
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => WeekPage(
-              studyId: widget.id, week: Map<String,dynamic>.from(current)))).then((_) => refresh()),
+              studyId: widget.id, week: Map<String,dynamic>.from(current),
+              hasPdf: (study!['pdf_name'] as String).isNotEmpty))).then((_) => refresh()),
             icon: const Icon(Icons.arrow_forward_rounded),
             label: Text(current['active_session_id'] == null ? '이번 주 공부 시작하기' : '친구들과 대화 이어하기'))),
         ])),
@@ -483,7 +484,8 @@ class _StudyPageState extends State<StudyPage> {
 class WeekPage extends StatefulWidget {
   final int studyId;
   final Map<String, dynamic> week;
-  const WeekPage({super.key, required this.studyId, required this.week});
+  final bool hasPdf;
+  const WeekPage({super.key, required this.studyId, required this.week, required this.hasPdf});
   @override State<WeekPage> createState() => _WeekPageState();
 }
 class _WeekPageState extends State<WeekPage> {
@@ -492,29 +494,36 @@ class _WeekPageState extends State<WeekPage> {
   late final remainingScope = TextEditingController(text: widget.week['remaining_scope'] ?? '');
   late double progress = (widget.week['progress_percent'] as int? ?? 0).toDouble();
   late DateTime meetingDate = DateTime.parse(widget.week['meeting_date']);
+  late bool includePrevious = widget.week['include_previous_questions'] != 0;
   final note = TextEditingController();
   bool busy = false;
   @override void dispose() { title.dispose(); scope.dispose(); remainingScope.dispose(); note.dispose(); super.dispose(); }
+  Map<String, dynamic> weekPayload() => {
+    'title': title.text.trim(), 'scope': scope.text.trim(),
+    'meeting_date': '${meetingDate.year}-${meetingDate.month.toString().padLeft(2, '0')}-${meetingDate.day.toString().padLeft(2, '0')}',
+    'status': widget.week['status'], 'progress_percent': progress.round(),
+    'remaining_scope': remainingScope.text.trim(), 'include_previous_questions': includePrevious,
+  };
   Future<void> save() async {
     if (title.text.trim().isEmpty || scope.text.trim().isEmpty) {
       errorMessage(context, '주차 목표와 교안 범위를 입력해 주세요.'); return;
     }
     setState(() => busy = true);
-    try { await Api.request('PUT', '/studies/${widget.studyId}/weeks/${widget.week['week_no']}', {
-      'title': title.text.trim(), 'scope': scope.text.trim(),
-      'meeting_date': '${meetingDate.year}-${meetingDate.month.toString().padLeft(2, '0')}-${meetingDate.day.toString().padLeft(2, '0')}',
-      'status': widget.week['status'], 'progress_percent': progress.round(),
-      'remaining_scope': remainingScope.text.trim()});
+    try { await Api.request('PUT', '/studies/${widget.studyId}/weeks/${widget.week['week_no']}', weekPayload());
       if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('계획을 저장했어요!'))); Navigator.pop(context); }
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> start() async {
-    if (note.text.trim().length < 10) {
-      errorMessage(context, '공부한 내용을 조금만 더 적어 주세요. 10자 이상이면 시작할 수 있어요.'); return;
+    if ((!widget.hasPdf && note.text.trim().length < 10) ||
+        (note.text.trim().isNotEmpty && note.text.trim().length < 10)) {
+      errorMessage(context, widget.hasPdf ? '비워 두거나 10자 이상 적어 주세요.'
+        : '공부한 내용을 조금만 더 적어 주세요. 10자 이상이면 시작할 수 있어요.'); return;
     }
     setState(() => busy = true);
-    try { final result = await Api.request('POST', '/studies/${widget.studyId}/weeks/${widget.week['week_no']}/sessions', {'text': note.text.trim()});
+    try {
+      await Api.request('PUT', '/studies/${widget.studyId}/weeks/${widget.week['week_no']}', weekPayload());
+      final result = await Api.request('POST', '/studies/${widget.studyId}/weeks/${widget.week['week_no']}/sessions', {'text': note.text.trim()});
       if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => SessionPage(id: result['session_id'])));
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
@@ -550,6 +559,11 @@ class _WeekPageState extends State<WeekPage> {
           Text('이전 주 복습 · ${(widget.week['review'] as List).join(', ')}'),
         ],
       ])),
+      if (widget.week['week_no'] > 1) SoftPanel(child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('이전 주차 내용도 질문받기'),
+        subtitle: const Text('끄면 이번 주차만 물어봐요. AI 친구들이 앞에서 배운 내용은 그대로 기억해요.'),
+        value: includePrevious, onChanged: (value) => setState(() => includePrevious = value))),
       OutlinedButton(onPressed: busy ? null : save, child: const Text('바꾼 계획 저장하기')),
       if (widget.week['active_session_id'] != null) ...[
         const SectionTitle('이야기하던 친구들이 기다려요'),
@@ -559,7 +573,9 @@ class _WeekPageState extends State<WeekPage> {
           icon: const Icon(Icons.chat_bubble_outline), label: const Text('대화 이어하기')),
       ] else ...[
         SectionTitle(widget.week['status'] == 'complete' ? '다시 이야기해 볼까요?' : '공부한 걸 이야기해 주세요'),
-        const SoftPanel(color: Color(0xFFEAF3FF), child: Text('완벽하게 쓸 필요 없어요. 지금 이해한 만큼만 적으면 AI 친구들이 궁금한 걸 물어볼 거예요.')),
+        SoftPanel(color: const Color(0xFFEAF3FF), child: Text(widget.hasPdf
+          ? '교안이 있으니 바로 질문을 받아도 돼요. 내가 이해한 내용을 적으면 그 내용도 함께 살펴볼게요.'
+          : '완벽하게 쓸 필요 없어요. 지금 이해한 만큼만 적으면 AI 친구들이 궁금한 걸 물어볼 거예요.')),
         const Wrap(spacing: 6, runSpacing: 4, children: [
           Chip(label: Text('핵심 개념')),
           Chip(label: Text('작동 방식')),
@@ -567,8 +583,9 @@ class _WeekPageState extends State<WeekPage> {
           Chip(label: Text('헷갈리는 부분')),
         ]),
         const SizedBox(height: 8),
-        TextField(controller: note, maxLines: 8, maxLength: 12000, decoration: const InputDecoration(
-          labelText: '내가 이해한 내용', hintText: '오늘 배운 걸 친구에게 설명하듯 적어 주세요.')),
+        TextField(controller: note, maxLines: 8, maxLength: 12000, decoration: InputDecoration(
+          labelText: widget.hasPdf ? '내가 이해한 내용 · 선택사항' : '내가 이해한 내용',
+          hintText: widget.hasPdf ? '비워 두면 이번 주 교안을 보고 질문해요.' : '오늘 배운 걸 친구에게 설명하듯 적어 주세요.')),
         const SizedBox(height: 12), FilledButton.icon(onPressed: busy ? null : start,
           icon: const Icon(Icons.chat_bubble_outline), label: Text(busy ? '친구들 부르는 중...' : 'AI 친구들과 이야기하기')),
       ],
@@ -676,7 +693,10 @@ class _SessionPageState extends State<SessionPage> {
             Center(child: Padding(padding: const EdgeInsets.only(bottom: 16),
               child: Text('내가 적은 내용부터 함께 이야기해요',
                 style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)))),
-            ChatBubble(name: '나 · 처음 생각', text: s['initial_note'], mine: true),
+            if ((s['initial_note'] as String).isEmpty)
+              const Center(child: Padding(padding: EdgeInsets.only(bottom: 12),
+                child: Text('이번 주 교안을 바탕으로 질문을 시작해요.')))
+            else ChatBubble(name: '나 · 처음 생각', text: s['initial_note'], mine: true),
             ...messages.map((m) => ChatBubble(
               name: m['role'] == 'assistant_hint' ? '${peerLabel(m['member_no'] as int)} · 힌트'
                 : m['role'] == 'assistant' ? peerLabel(m['member_no'] as int) : '나',

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS weeks (
  study_id INTEGER NOT NULL, week_no INTEGER NOT NULL, title TEXT NOT NULL,
  scope TEXT NOT NULL, meeting_date TEXT NOT NULL, review TEXT NOT NULL DEFAULT '[]',
  status TEXT NOT NULL DEFAULT 'planned', progress_percent INTEGER NOT NULL DEFAULT 0,
- remaining_scope TEXT NOT NULL DEFAULT '', PRIMARY KEY(study_id,week_no)
+ remaining_scope TEXT NOT NULL DEFAULT '', include_previous_questions INTEGER NOT NULL DEFAULT 1,
+ PRIMARY KEY(study_id,week_no)
 );
 CREATE TABLE IF NOT EXISTS members (
  study_id INTEGER NOT NULL, member_no INTEGER NOT NULL, name TEXT NOT NULL,
@@ -49,6 +50,8 @@ def connect():
         db.execute("ALTER TABLE weeks ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
     if "remaining_scope" not in week_columns:
         db.execute("ALTER TABLE weeks ADD COLUMN remaining_scope TEXT NOT NULL DEFAULT ''")
+    if "include_previous_questions" not in week_columns:
+        db.execute("ALTER TABLE weeks ADD COLUMN include_previous_questions INTEGER NOT NULL DEFAULT 1")
     try:
         yield db
         db.commit()

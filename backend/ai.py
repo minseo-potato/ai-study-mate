@@ -59,14 +59,21 @@ def demo_response(instructions: str, payload: dict) -> dict:
     member = payload["member"]
     previous = payload["messages"]
     last_answer = next((m["body"].strip() for m in reversed(previous) if m["role"] == "user"), "")
-    lead = last_answer[:45] if len(last_answer) >= 10 and "모르" not in last_answer else payload["study_goal"][:45]
+    current_pages = payload.get("current_source_pages", payload["source_pages"])
+    earlier_pages = payload.get("previous_source_pages", [])
+    use_earlier = bool(payload.get("include_previous_questions") and earlier_pages and
+                       member["perspective"] == "앞 주차와의 연결")
+    chosen_page = earlier_pages[0] if use_earlier else (current_pages[0] if current_pages else None)
+    if not payload["initial_note"] and chosen_page:
+        lead = chosen_page["text"][:65].replace("\n", " ")
+    else:
+        lead = last_answer[:45] if len(last_answer) >= 10 and "모르" not in last_answer else payload["study_goal"][:45]
     questions = {
         "개념과 정의": f"궁금한 게 있어요! '{lead}'에서 가장 중요한 개념은 뭐라고 생각해요?",
         "예시와 적용": f"그럼 '{lead}'을 실제 예시에 써 보면 어떻게 될까요?",
         "앞 주차와의 연결": f"'{lead}'이랑 앞에서 배운 내용은 어떻게 이어질까요?",
         "다른 해석": f"재밌네요. '{lead}'을 다른 관점에서도 볼 수 있을까요?",
     }
-    pages = payload["source_pages"]
     return {"question": questions.get(member["perspective"], questions["개념과 정의"]),
-            "page_no": pages[0]["page_no"] if pages else None,
+            "page_no": chosen_page["page_no"] if chosen_page else None,
             "understanding": f"{member['perspective']} 관점에서 사용자의 설명을 들었다."}

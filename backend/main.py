@@ -110,8 +110,8 @@ async def create_study(
         study_id = cur.lastrowid
         db.executemany("INSERT INTO pages VALUES(?,?,?)", [(study_id, n, body) for n, body in pages])
         for number in range(1, weeks + 1):
-            first = math.ceil((number - 1) * page_count / weeks) + 1
-            last = math.ceil(number * page_count / weeks)
+            first = min(page_count, math.ceil((number - 1) * page_count / weeks) + 1) if page_count else 1
+            last = max(first, math.ceil(number * page_count / weeks)) if page_count else 0
             if pages:
                 week_title = f"{number}주차"
                 scope = f"{first}~{last}쪽" if first <= last else "이전 범위 복습"
@@ -148,6 +148,7 @@ class WeekEdit(BaseModel):
     status: str = "planned"
     progress_percent: int | None = Field(default=None, ge=0, le=100)
     remaining_scope: str | None = Field(default=None, max_length=300)
+    include_previous_questions: bool | None = None
 
 
 @app.put("/studies/{study_id}/weeks/{week_no}")
@@ -158,10 +159,11 @@ def edit_week(study_id: int, week_no: int, body: WeekEdit):
         old = required(db, "SELECT * FROM weeks WHERE study_id=? AND week_no=?", (study_id, week_no))
         progress = old["progress_percent"] if body.progress_percent is None else body.progress_percent
         remaining_scope = old["remaining_scope"] if body.remaining_scope is None else body.remaining_scope.strip()
+        include_previous = old["include_previous_questions"] if body.include_previous_questions is None else int(body.include_previous_questions)
         status = "in_progress" if body.status == "planned" and progress > 0 else body.status
-        db.execute("UPDATE weeks SET title=?,scope=?,meeting_date=?,status=?,progress_percent=?,remaining_scope=? WHERE study_id=? AND week_no=?",
+        db.execute("UPDATE weeks SET title=?,scope=?,meeting_date=?,status=?,progress_percent=?,remaining_scope=?,include_previous_questions=? WHERE study_id=? AND week_no=?",
                    (body.title, body.scope, body.meeting_date.isoformat(), status, progress,
-                    remaining_scope, study_id, week_no))
+                    remaining_scope, include_previous, study_id, week_no))
         return study_data(db, study_id)
 
 
@@ -209,18 +211,22 @@ async def replan_draft(study_id: int):
 
 
 class Note(BaseModel):
-    text: str = Field(min_length=10, max_length=12000)
+    text: str = Field(default="", max_length=12000)
 
 
 @app.post("/studies/{study_id}/weeks/{week_no}/sessions")
 def start_session(study_id: int, week_no: int, body: Note):
     with connect() as db:
         required(db, "SELECT 1 FROM weeks WHERE study_id=? AND week_no=?", (study_id, week_no))
+        note = body.text.strip()
+        has_pdf = db.execute("SELECT 1 FROM pages WHERE study_id=? LIMIT 1", (study_id,)).fetchone() is not None
+        if (not note and not has_pdf) or (note and len(note) < 10):
+            raise HTTPException(400, "교안이 없다면 공부한 내용을 10자 이상 적어 주세요.")
         active = db.execute("SELECT id FROM sessions WHERE study_id=? AND week_no=? AND status='active'", (study_id, week_no)).fetchone()
         if active:
             raise HTTPException(409, f"진행 중인 세션이 있습니다: {active['id']}")
         cur = db.execute("INSERT INTO sessions(study_id,week_no,initial_note) VALUES(?,?,?)",
-                         (study_id, week_no, body.text.strip()))
+                         (study_id, week_no, note))
         db.execute("UPDATE weeks SET status='in_progress' WHERE study_id=? AND week_no=?", (study_id, week_no))
         return {"session_id": cur.lastrowid}
 
@@ -241,12 +247,17 @@ def get_session(session_id: int):
         return session_data(db, session_id)
 
 
-def source_pages(db, study_id, scope, note):
+def source_pages(db, study_id, scope, note, week_no=None, total_weeks=None):
     all_pages = [dict(r) for r in db.execute("SELECT page_no,body FROM pages WHERE study_id=?", (study_id,))]
     match = re.search(r"(\d+)\s*[~\-]\s*(\d+)\s*쪽", scope)
     if match:
         a, b = map(int, match.groups())
-        all_pages = [p for p in all_pages if a <= p["page_no"] <= b] or all_pages
+        all_pages = [p for p in all_pages if a <= p["page_no"] <= b]
+    elif week_no is not None and total_weeks:
+        page_count = len(all_pages)
+        a = min(page_count, math.ceil((week_no - 1) * page_count / total_weeks) + 1) if page_count else 1
+        b = max(a, math.ceil(week_no * page_count / total_weeks)) if page_count else 0
+        all_pages = [p for p in all_pages if a <= p["page_no"] <= b]
     terms = set(re.findall(r"[가-힣A-Za-z0-9]{3,}", note.lower()))
     all_pages.sort(key=lambda p: sum(p["body"].lower().count(t) for t in terms), reverse=True)
     return [{"page_no": p["page_no"], "text": p["body"][:2500]} for p in all_pages[:3]]
@@ -263,21 +274,42 @@ async def next_question(session_id: int):
         study = study_data(db, session["study_id"])
         member = study["members"][(session["next_member"] - 1) % len(study["members"])]
         week = study["weeks"][session["week_no"] - 1]
-        pages = source_pages(db, session["study_id"], week["scope"], session["initial_note"])
+        pages = source_pages(db, session["study_id"], week["scope"],
+                             session["initial_note"] or study["goal"], session["week_no"], len(study["weeks"]))
+        previous_context, previous_pages = [], []
+        if week["include_previous_questions"]:
+            previous_context = [{"week_no": row["week_no"], "initial_note": row["initial_note"],
+                                 "revised_note": row["revised_note"], "minutes": loads(row["minutes"]) if row["minutes"] else {}}
+                                for row in db.execute(
+                                    "SELECT week_no,initial_note,revised_note,minutes FROM sessions "
+                                    "WHERE study_id=? AND week_no<? AND status='finished' ORDER BY week_no DESC,id DESC LIMIT 4",
+                                    (session["study_id"], session["week_no"]))]
+            seen = {p["page_no"] for p in pages}
+            for older in reversed(study["weeks"][:session["week_no"] - 1]):
+                for page in source_pages(db, session["study_id"], older["scope"], study["goal"],
+                                         older["week_no"], len(study["weeks"]))[:1]:
+                    if page["page_no"] not in seen and len(previous_pages) < 3:
+                        previous_pages.append(page)
+                        seen.add(page["page_no"])
     result = await generate_json(
-        "당신은 채점자가 아닌 같은 주제를 공부하는 친근한 동료입니다. 사용자의 발표와 이전 대화를 바탕으로 한국어 질문 하나만 하세요. "
+        "당신은 채점자가 아닌 같은 주제를 공부하는 친근한 동료입니다. 한국어 질문 하나만 하세요. "
         "친구와 이야기하듯 자연스러운 존댓말을 사용하고, 짧게 물어보세요. 칭찬을 반복하거나 시험 문제처럼 말하지 마세요. "
         "동료의 level과 understanding을 현재 이해 상태로 참고하고, perspective는 시작 관점으로만 사용하세요. "
-        "사용자 답변에 맞춰 후속 질문을 바꾸고 다른 동료의 질문도 확인하세요. "
+        "사용자 답변에 맞춰 후속 질문을 바꾸고 다른 동료의 질문도 확인하세요. 발표문이 비어 있으면 current_source_pages의 교안 내용을 중심으로 질문하세요. "
+        "include_previous_questions가 참이면 이전 주차의 기록과 교안도 질문할 수 있습니다. 거짓이면 이번 주차 범위만 질문하세요. "
+        "거짓이어도 member의 누적 understanding을 지우거나 되돌리지 마세요. "
         "기존 질문을 반복하지 마세요. 바로 정답을 알려주지 마세요. 교안 근거가 있는 경우 page_no에 제공된 쪽수 하나를 쓰세요. "
         "JSON 키는 question,page_no,understanding입니다. understanding은 이 동료가 이번 대화에서 이해한 내용을 짧게 적으세요.",
         {"study_goal": study["goal"], "week": week, "member": member,
-         "initial_note": session["initial_note"], "messages": session["messages"][-12:], "source_pages": pages},
+         "initial_note": session["initial_note"], "messages": session["messages"][-12:],
+         "include_previous_questions": bool(week["include_previous_questions"]),
+         "current_source_pages": pages, "previous_source_pages": previous_pages,
+         "previous_study": previous_context, "source_pages": pages + previous_pages},
     )
     question = str(result.get("question", "")).strip()
     if not question:
         raise HTTPException(502, "질문이 비어 있습니다.")
-    valid_pages = {p["page_no"] for p in pages}
+    valid_pages = {p["page_no"] for p in pages + previous_pages}
     page_no = result.get("page_no") if result.get("page_no") in valid_pages else None
     with connect() as db:
         current = session_data(db, session_id)
@@ -302,7 +334,13 @@ async def explain(session_id: int):
         question = messages[-1]
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
-        pages = source_pages(db, session["study_id"], week["scope"], question["body"])
+        pages = source_pages(db, session["study_id"], week["scope"], question["body"],
+                             session["week_no"], len(study["weeks"]))
+        if week["include_previous_questions"] and question["page_no"] not in {p["page_no"] for p in pages}:
+            older = [p for w in study["weeks"][:session["week_no"] - 1]
+                     for p in source_pages(db, session["study_id"], w["scope"], question["body"],
+                                           w["week_no"], len(study["weeks"]))]
+            pages = (pages + [p for p in older if p["page_no"] == question["page_no"]])[:4]
     result = await generate_json(
         "교안 기반 설명을 요청받았습니다. 친구가 옆에서 도와주듯 자연스러운 존댓말로 짧은 힌트를 주세요. "
         "교안에 없는 사실이나 페이지 번호를 만들지 마세요. 교안이 없으면 일반적인 생각의 방향만 알려주세요. "
@@ -356,7 +394,8 @@ async def finish(session_id: int, body: Finish):
             raise HTTPException(409, "이미 종료된 세션입니다.")
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
-        pages = source_pages(db, session["study_id"], week["scope"], body.revised_note)
+        pages = source_pages(db, session["study_id"], week["scope"], body.revised_note,
+                             session["week_no"], len(study["weeks"]))
     summary = await generate_json(
         "랩미팅 회의록을 한국어로 요약하세요. JSON 키는 summary, next_checks입니다. "
         "사용자 발언과 AI 질문을 구별하고, 근거 없는 사실을 확정하지 마세요. next_checks는 문자열 배열입니다.",
@@ -374,6 +413,10 @@ async def finish(session_id: int, body: Finish):
         required(db, "SELECT id FROM sessions WHERE id=? AND status='active'", (session_id,))
         db.execute("UPDATE sessions SET revised_note=?,unanswered=?,minutes=?,status='finished' WHERE id=?",
                    (body.revised_note, dumps(checks), dumps(minutes), session_id))
+        for member in study["members"]:
+            learned = f"{member['understanding']} | {session['week_no']}주차 학습: {body.revised_note.strip()}"
+            db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
+                       (learned[-500:], session["study_id"], member["member_no"]))
         db.execute("UPDATE weeks SET status='complete',progress_percent=100,remaining_scope='' WHERE study_id=? AND week_no=?",
                    (session["study_id"], session["week_no"]))
         if session["week_no"] < len(study["weeks"]):
