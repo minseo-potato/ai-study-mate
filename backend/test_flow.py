@@ -9,6 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from reportlab.pdfgen import canvas
 
+from ai import demo_response
 from main import app
 
 
@@ -41,6 +42,14 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_demo_question_uses_goal_when_note_is_unclear(self):
+        payload = {"member": {"perspective": "개념과 정의"},
+                   "study_goal": "정렬 원리 설명", "initial_note": "ㅇㄹㅇㄹㅁㄴㅇㄹ",
+                   "messages": [], "source_pages": []}
+        question = demo_response("질문", payload)["question"]
+        self.assertIn("정렬 원리 설명", question)
+        self.assertNotIn("ㅇㄹㅇㄹ", question)
+
     def test_study_without_pdf_can_start_chat(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
             client = TestClient(app)

@@ -188,19 +188,19 @@ class _HomePageState extends State<HomePage> {
         const CircleAvatar(radius: 28, backgroundColor: Color(0xFFD4E6FF),
           child: Icon(Icons.smart_toy_rounded, size: 30, color: Color(0xFF3F7FF3))),
         const SizedBox(height: 14),
-        Text('혼자보다 함께, 더 오래 공부해요',
+        Text('오늘도 같이 공부해요!',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: const Color(0xFF0B1B43))),
         const SizedBox(height: 8),
-        const Text('주제만 적어도 시작할 수 있어요. AI 친구들이 질문하며 함께 공부해요.',
+        const Text('공부할 주제만 정해 주세요. AI 친구들이 옆에서 함께할게요.',
           style: TextStyle(color: Color(0xFF536887))),
         const SizedBox(height: 18),
         FilledButton.icon(onPressed: openCreate,
-          icon: const Icon(Icons.add), label: const Text('새 스터디 시작')),
+          icon: const Icon(Icons.add), label: const Text('새 스터디 만들기')),
       ])),
       if (demoMode) const Padding(padding: EdgeInsets.fromLTRB(4, 12, 4, 0),
-        child: Text('시연 모드 · 질문과 요약은 규칙 기반 예시입니다.', style: TextStyle(color: Color(0xFF64748B), fontSize: 13))),
+        child: Text('지금은 체험 모드예요. 질문과 정리는 예시로 보여드려요.', style: TextStyle(color: Color(0xFF64748B), fontSize: 13))),
       const SectionTitle('이렇게 진행해요'),
-      const SoftPanel(child: Text('① 주제 정하기  →  ② 주간 계획 확인  →  ③ AI 친구들과 대화')),
+      const SoftPanel(child: Text('① 주제 고르기  →  ② 이번 주 공부하기  →  ③ AI 친구들과 이야기하기')),
       if (loading) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
       if (loadError != null) SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(loadError!), const SizedBox(height: 12),
@@ -208,7 +208,7 @@ class _HomePageState extends State<HomePage> {
       ])),
       SectionTitle('내 스터디', detail: '${studies.length}개'),
       if (!loading && loadError == null && studies.isEmpty)
-        const SoftPanel(child: Text('아직 스터디가 없어요. 주제와 목표를 적어 첫 스터디를 시작해 보세요.')),
+        const SoftPanel(child: Text('아직 스터디가 없네요. 공부하고 싶은 주제로 하나 만들어 볼까요?')),
       ...studies.map((s) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
         leading: const CircleAvatar(backgroundColor: Color(0xFFEAF2FF),
           child: Icon(Icons.smart_toy_rounded, color: Color(0xFF3F7FF3))),
@@ -272,9 +272,9 @@ class _CreatePageState extends State<CreatePage> {
           child: Icon(Icons.auto_stories_rounded, color: Color(0xFF3F7FF3))),
         SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('나만의 AI 스터디를 시작해요', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text('어떤 걸 함께 공부할까요?', style: TextStyle(fontWeight: FontWeight.w700)),
           SizedBox(height: 4),
-          Text('주제만 있어도 괜찮아요. AI 친구들이 함께할게요.',
+          Text('주제와 목표를 적으면 AI 친구들이 기다리고 있을게요.',
             style: TextStyle(fontSize: 12, color: Color(0xFF536887))),
         ])),
       ])),
@@ -337,7 +337,7 @@ class _CreatePageState extends State<CreatePage> {
           style: TextStyle(color: Color(0xFF777777), fontSize: 12))),
       if (pdfError != null) Padding(padding: const EdgeInsets.fromLTRB(12, 4, 0, 0),
         child: Text(pdfError!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-      const SizedBox(height: 20), FilledButton(onPressed: busy ? null : submit, child: Text(busy ? '저장 중...' : '스터디 생성')),
+      const SizedBox(height: 20), FilledButton(onPressed: busy ? null : submit, child: Text(busy ? '만드는 중...' : '스터디 만들기')),
     ])));
 }
 
@@ -400,7 +400,7 @@ class _StudyPageState extends State<StudyPage> {
         SoftPanel(color: const Color(0xFFEAF3FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(study!['goal'], style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
-          Text((study!['pdf_name'] as String).isEmpty ? 'PDF 없이 자유롭게 공부 중' : '교안 · ${study!['pdf_name']}',
+          Text((study!['pdf_name'] as String).isEmpty ? '교안 없이 내 방식대로 공부해요' : '함께 볼 교안 · ${study!['pdf_name']}',
             style: const TextStyle(color: Color(0xFF536887))),
           const SizedBox(height: 16),
           Text('$completed / ${weeks.length}주 완료', style: const TextStyle(fontWeight: FontWeight.w700)),
@@ -433,7 +433,7 @@ class _StudyPageState extends State<StudyPage> {
             Expanded(child: Text('${current['title']}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
           ]),
           const SizedBox(height: 18),
-          const Text('이번 주 공부할 내용', style: TextStyle(color: Color(0xFF536887), fontSize: 12)),
+          const Text('이번 주에는 이걸 공부해요', style: TextStyle(color: Color(0xFF536887), fontSize: 12)),
           const SizedBox(height: 5), Text('${current['scope']}'),
           if ((current['progress_percent'] as int) > 0) ...[
             const SizedBox(height: 12),
@@ -446,7 +446,7 @@ class _StudyPageState extends State<StudyPage> {
             const SizedBox(height: 8), Text('남은 내용 · ${current['remaining_scope']}',
               style: const TextStyle(color: Color(0xFFB15E38))),
           ],
-          const SizedBox(height: 10), Text('랩미팅 · ${current['meeting_date']}',
+          const SizedBox(height: 10), Text('함께 이야기하는 날 · ${current['meeting_date']}',
             style: const TextStyle(color: Color(0xFF536887), fontSize: 12)),
           if ((current['review'] as List).isNotEmpty) ...[
             const SizedBox(height: 14),
@@ -459,20 +459,20 @@ class _StudyPageState extends State<StudyPage> {
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => WeekPage(
               studyId: widget.id, week: Map<String,dynamic>.from(current)))).then((_) => refresh()),
             icon: const Icon(Icons.arrow_forward_rounded),
-            label: Text(current['active_session_id'] == null ? '이번 주 학습 열기' : '대화 이어하기'))),
+            label: Text(current['active_session_id'] == null ? '이번 주 공부 시작하기' : '친구들과 대화 이어하기'))),
         ])),
-        const SectionTitle('학습 계획 조정'),
+        const SectionTitle('계획을 바꾸고 싶다면'),
         Wrap(spacing: 10, runSpacing: 8, children: [
           OutlinedButton.icon(onPressed: busy ? null : () => draft(), icon: const Icon(Icons.auto_awesome),
-            label: Text(busy ? '계획 생성 중...' : 'AI 계획 제안')),
-          OutlinedButton(onPressed: busy ? null : () => draft(true), child: const Text('남은 일정 다시 짜기')),
+            label: Text(busy ? '계획 만드는 중...' : 'AI에게 계획 부탁하기')),
+          OutlinedButton(onPressed: busy ? null : () => draft(true), child: const Text('남은 일정 다시 짜 보기')),
         ]),
-        SectionTitle('지난 회의록', detail: '${minutes.length}개'),
-        if (minutes.isEmpty) const SoftPanel(child: Text('랩미팅을 마치면 대화 기록이 여기에 모여요.')),
+        SectionTitle('함께 공부한 기록', detail: '${minutes.length}개'),
+        if (minutes.isEmpty) const SoftPanel(child: Text('AI 친구들과 이야기를 마치면 기록이 여기에 쌓여요.')),
         ...minutes.map((m) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           leading: const CircleAvatar(backgroundColor: Color(0xFFEAF2FF),
             child: Icon(Icons.description_outlined, color: Color(0xFF3F7FF3))),
-          title: Text('${m['week_no']}주차 회의록', style: const TextStyle(fontWeight: FontWeight.w700)),
+          title: Text('${m['week_no']}주차 이야기 기록', style: const TextStyle(fontWeight: FontWeight.w700)),
           subtitle: Text('${m['minutes']['summary']}', maxLines: 2, overflow: TextOverflow.ellipsis),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SessionPage(id: m['session_id'])))))),
@@ -505,13 +505,13 @@ class _WeekPageState extends State<WeekPage> {
       'meeting_date': '${meetingDate.year}-${meetingDate.month.toString().padLeft(2, '0')}-${meetingDate.day.toString().padLeft(2, '0')}',
       'status': widget.week['status'], 'progress_percent': progress.round(),
       'remaining_scope': remainingScope.text.trim()});
-      if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('저장했습니다.'))); Navigator.pop(context); }
+      if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('계획을 저장했어요!'))); Navigator.pop(context); }
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> start() async {
     if (note.text.trim().length < 10) {
-      errorMessage(context, '발표문을 10자 이상 적어 주세요.'); return;
+      errorMessage(context, '공부한 내용을 조금만 더 적어 주세요. 10자 이상이면 시작할 수 있어요.'); return;
     }
     setState(() => busy = true);
     try { final result = await Api.request('POST', '/studies/${widget.studyId}/weeks/${widget.week['week_no']}/sessions', {'text': note.text.trim()});
@@ -540,7 +540,7 @@ class _WeekPageState extends State<WeekPage> {
       const SizedBox(height: 12),
       SoftPanel(color: const Color(0xFFF1F7FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.event_outlined),
-          title: Text('랩미팅 · ${meetingDate.year}-${meetingDate.month}-${meetingDate.day}'),
+          title: Text('함께 이야기하는 날 · ${meetingDate.year}-${meetingDate.month}-${meetingDate.day}'),
           trailing: const Icon(Icons.edit_calendar_outlined),
           onTap: () async { final selected = await showDatePicker(context: context,
             initialDate: meetingDate, firstDate: DateTime(2020), lastDate: DateTime(2100));
@@ -550,16 +550,16 @@ class _WeekPageState extends State<WeekPage> {
           Text('이전 주 복습 · ${(widget.week['review'] as List).join(', ')}'),
         ],
       ])),
-      OutlinedButton(onPressed: busy ? null : save, child: const Text('계획 수정 저장')),
+      OutlinedButton(onPressed: busy ? null : save, child: const Text('바꾼 계획 저장하기')),
       if (widget.week['active_session_id'] != null) ...[
-        const SectionTitle('진행 중인 랩미팅'),
-        const SoftPanel(child: Text('이전에 시작한 대화가 있어요. 이어서 질문하고 답변할 수 있습니다.')),
+        const SectionTitle('이야기하던 친구들이 기다려요'),
+        const SoftPanel(child: Text('지난 대화부터 바로 이어서 이야기할 수 있어요.')),
         FilledButton.icon(onPressed: () => Navigator.pushReplacement(context,
           MaterialPageRoute(builder: (_) => SessionPage(id: widget.week['active_session_id']))),
           icon: const Icon(Icons.chat_bubble_outline), label: const Text('대화 이어하기')),
       ] else ...[
-        SectionTitle(widget.week['status'] == 'complete' ? '다시 발표하기' : '내 발표 준비'),
-        const SoftPanel(color: Color(0xFFEAF3FF), child: Text('공부한 내용을 먼저 내 말로 설명해 보세요. AI 친구들이 질문하며 함께 정리해 줍니다.')),
+        SectionTitle(widget.week['status'] == 'complete' ? '다시 이야기해 볼까요?' : '공부한 걸 이야기해 주세요'),
+        const SoftPanel(color: Color(0xFFEAF3FF), child: Text('완벽하게 쓸 필요 없어요. 지금 이해한 만큼만 적으면 AI 친구들이 궁금한 걸 물어볼 거예요.')),
         const Wrap(spacing: 6, runSpacing: 4, children: [
           Chip(label: Text('핵심 개념')),
           Chip(label: Text('작동 방식')),
@@ -568,9 +568,9 @@ class _WeekPageState extends State<WeekPage> {
         ]),
         const SizedBox(height: 8),
         TextField(controller: note, maxLines: 8, maxLength: 12000, decoration: const InputDecoration(
-          labelText: '내 학습 정리 / 발표문', hintText: '배운 내용을 자유롭게 적어 보세요. 위 항목을 참고해도 좋아요.')),
+          labelText: '내가 이해한 내용', hintText: '오늘 배운 걸 친구에게 설명하듯 적어 주세요.')),
         const SizedBox(height: 12), FilledButton.icon(onPressed: busy ? null : start,
-          icon: const Icon(Icons.chat_bubble_outline), label: Text(busy ? '시작 중...' : '대화 시작하기')),
+          icon: const Icon(Icons.chat_bubble_outline), label: Text(busy ? '친구들 부르는 중...' : 'AI 친구들과 이야기하기')),
       ],
     ]));
 }
@@ -603,12 +603,15 @@ class _SessionPageState extends State<SessionPage> {
   Future<void> act(String path, [Map<String, dynamic>? body]) async {
     setState(() => busy = true);
     try { final data = await Api.request('POST', '/sessions/${widget.id}/$path', body);
-      if (mounted) { setState(() { session = data; answer.clear(); needsReview = false; }); scrollToLatest(); }
+      if (mounted) { setState(() {
+        session = data;
+        if (path == 'answer') { answer.clear(); needsReview = false; }
+      }); scrollToLatest(); }
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> sendAnswer() async {
-    if (answer.text.trim().isEmpty) { errorMessage(context, '답변을 적어 주세요.'); return; }
+    if (answer.text.trim().isEmpty) { errorMessage(context, '생각나는 만큼만 적어 주세요.'); return; }
     await act('answer', {'text': answer.text.trim(), 'needs_review': needsReview});
   }
   Future<void> finish() async {
@@ -617,16 +620,16 @@ class _SessionPageState extends State<SessionPage> {
         padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.viewInsetsOf(sheetContext).bottom + 24),
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 650), child: Column(
           mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Text('대화 정리하기', style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            Text('오늘 이야기, 다시 정리해 볼까요?', style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            const Text('질문을 나눈 뒤 이해한 내용을 다시 설명해 보세요. 10자 이상 적으면 회의록을 만들 수 있어요.'),
+            const Text('처음에 쓴 내용과 달라진 생각이 있나요? 지금 이해한 걸 내 말로 적어 주세요.'),
             const SizedBox(height: 16),
             TextField(controller: revised, autofocus: true, minLines: 3, maxLines: 6, maxLength: 12000,
               onChanged: (_) => setSheetState(() {}),
-              decoration: const InputDecoration(hintText: '처음 발표에서 바뀐 점이나 새로 이해한 내용을 적어 보세요.')),
+              decoration: const InputDecoration(hintText: '새로 알게 된 점이나 아직 헷갈리는 걸 적어 주세요.')),
             const SizedBox(height: 8),
             FilledButton(onPressed: revised.text.trim().length < 10 ? null
-              : () => Navigator.pop(sheetContext, revised.text.trim()), child: const Text('회의록 만들기')),
+              : () => Navigator.pop(sheetContext, revised.text.trim()), child: const Text('오늘의 기록 저장하기')),
           ])))));
     if (note != null && mounted) await act('finish', {'revised_note': note});
   }
@@ -643,8 +646,8 @@ class _SessionPageState extends State<SessionPage> {
       backgroundColor: const Color(0xFFF8FAFF),
       appBar: AppBar(backgroundColor: const Color(0xFFF8FAFF),
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${s?['week_no'] ?? ''}주차 랩미팅', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          Text(finished ? '대화가 끝났어요' : 'AI 스터디원과 함께 공부 중',
+          Text('${s?['week_no'] ?? ''}주차 스터디방', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          Text(finished ? '오늘의 이야기를 마쳤어요' : 'AI 친구들이 함께 있어요',
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400)),
         ])),
       body: s == null ? const Center(child: CircularProgressIndicator()) : Center(
@@ -671,9 +674,9 @@ class _SessionPageState extends State<SessionPage> {
               const SizedBox(height: 18),
             ],
             Center(child: Padding(padding: const EdgeInsets.only(bottom: 16),
-              child: Text('내 발표에서 시작된 대화예요',
+              child: Text('내가 적은 내용부터 함께 이야기해요',
                 style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)))),
-            ChatBubble(name: '나 · 첫 발표', text: s['initial_note'], mine: true),
+            ChatBubble(name: '나 · 처음 생각', text: s['initial_note'], mine: true),
             ...messages.map((m) => ChatBubble(
               name: m['role'] == 'assistant_hint' ? '${peerLabel(m['member_no'] as int)} · 힌트'
                 : m['role'] == 'assistant' ? peerLabel(m['member_no'] as int) : '나',
@@ -683,19 +686,19 @@ class _SessionPageState extends State<SessionPage> {
             if (messages.isEmpty) const Center(child: Padding(
               padding: EdgeInsets.all(18), child: Text('아래에서 질문을 받아 대화를 시작해 보세요.'))),
             if (finished) ...[
-              ChatBubble(name: '나 · 다시 정리한 설명', text: s['revised_note'], mine: true),
+              ChatBubble(name: '나 · 다시 정리한 생각', text: s['revised_note'], mine: true),
               const SizedBox(height: 14),
               Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
                   const Row(children: [
                     Icon(Icons.description_outlined, size: 21), SizedBox(width: 7),
-                    Text('오늘의 회의록', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
+                    Text('오늘의 스터디 기록', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
                   ]),
                   const SizedBox(height: 12), Text('${minutes?['summary'] ?? ''}'),
                   const Divider(height: 30),
-                  const Text('다음에 확인할 내용', style: TextStyle(fontWeight: FontWeight.w700)),
+                  const Text('다음에 다시 볼 것', style: TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
-                  Text(checks.isEmpty ? '없음' : checks.map((x) => '• $x').join('\n')),
+                  Text(checks.isEmpty ? '오늘은 다 확인했어요!' : checks.map((x) => '• $x').join('\n')),
                 ]))),
             ],
           ])),
@@ -709,10 +712,10 @@ class _SessionPageState extends State<SessionPage> {
                   if (messages.last['role'] == 'assistant')
                     Align(alignment: Alignment.centerLeft, child: TextButton.icon(
                       onPressed: busy ? null : () => act('explain'),
-                      icon: const Icon(Icons.lightbulb_outline), label: const Text('설명이나 힌트 부탁하기'))),
+                      icon: const Icon(Icons.lightbulb_outline), label: const Text('힌트 좀 줄래?'))),
                   Row(children: [
                     Expanded(child: TextField(controller: answer, minLines: 1, maxLines: 3,
-                      decoration: const InputDecoration(hintText: '여기에 답변을 적어 보세요.'))),
+                      decoration: const InputDecoration(hintText: '내 생각을 적어 볼까요?'))),
                     const SizedBox(width: 8),
                     IconButton.filled(onPressed: busy ? null : sendAnswer,
                       style: IconButton.styleFrom(backgroundColor: const Color(0xFF3F7FF3),
@@ -721,12 +724,12 @@ class _SessionPageState extends State<SessionPage> {
                   ]),
                   Row(children: [
                     Checkbox(value: needsReview, onChanged: busy ? null : (v) => setState(() => needsReview = v ?? false)),
-                    const Expanded(child: Text('어려웠던 질문으로 표시하고 다음 주에 다시 볼래요', style: TextStyle(fontSize: 12))),
+                    const Expanded(child: Text('이 질문은 다음 주에 다시 보고 싶어요', style: TextStyle(fontSize: 12))),
                   ]),
                 ] else ...[
                   FilledButton.icon(onPressed: busy ? null : () => act('question'),
-                    icon: const Icon(Icons.chat_bubble_outline), label: const Text('질문 받아보기')),
-                  TextButton(onPressed: busy ? null : finish, child: const Text('대화 정리하고 회의록 만들기')),
+                    icon: const Icon(Icons.chat_bubble_outline), label: const Text('친구들은 뭐가 궁금할까?')),
+                  TextButton(onPressed: busy ? null : finish, child: const Text('오늘 이야기 정리하기')),
                 ],
               ]))),
         ]))));

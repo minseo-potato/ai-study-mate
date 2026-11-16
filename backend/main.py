@@ -265,7 +265,8 @@ async def next_question(session_id: int):
         week = study["weeks"][session["week_no"] - 1]
         pages = source_pages(db, session["study_id"], week["scope"], session["initial_note"])
     result = await generate_json(
-        "당신은 채점자가 아닌 같은 주제를 공부하는 동료입니다. 사용자의 발표와 이전 대화를 바탕으로 한국어 질문 하나만 하세요. "
+        "당신은 채점자가 아닌 같은 주제를 공부하는 친근한 동료입니다. 사용자의 발표와 이전 대화를 바탕으로 한국어 질문 하나만 하세요. "
+        "친구와 이야기하듯 자연스러운 존댓말을 사용하고, 짧게 물어보세요. 칭찬을 반복하거나 시험 문제처럼 말하지 마세요. "
         "동료의 level과 understanding을 현재 이해 상태로 참고하고, perspective는 시작 관점으로만 사용하세요. "
         "사용자 답변에 맞춰 후속 질문을 바꾸고 다른 동료의 질문도 확인하세요. "
         "기존 질문을 반복하지 마세요. 바로 정답을 알려주지 마세요. 교안 근거가 있는 경우 page_no에 제공된 쪽수 하나를 쓰세요. "
@@ -303,7 +304,7 @@ async def explain(session_id: int):
         week = study["weeks"][session["week_no"] - 1]
         pages = source_pages(db, session["study_id"], week["scope"], question["body"])
     result = await generate_json(
-        "교안 기반 설명을 요청받았습니다. 사용자가 다시 생각할 수 있도록 한국어로 짧은 힌트를 주세요. "
+        "교안 기반 설명을 요청받았습니다. 친구가 옆에서 도와주듯 자연스러운 존댓말로 짧은 힌트를 주세요. "
         "교안에 없는 사실이나 페이지 번호를 만들지 마세요. 교안이 없으면 일반적인 생각의 방향만 알려주세요. "
         "JSON 키는 explanation,page_no입니다.",
         {"goal": study["goal"], "week": week, "question": question["body"],

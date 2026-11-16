@@ -43,8 +43,8 @@ def demo_response(instructions: str, payload: dict) -> dict:
     """Predictable offline responses for an API-key-free live demonstration."""
     if "교안 기반 설명" in instructions:
         pages = payload["source_pages"]
-        return {"explanation": "질문에 나온 개념을 내 말로 정의하고, 한 가지 예시와 연결해 보세요. 교안의 관련 부분을 다시 확인하면 도움이 됩니다." if pages else
-                "질문에 나온 개념을 내 말로 정의하고, 한 가지 예시와 연결해 보세요.",
+        return {"explanation": "괜찮아요, 같이 생각해 봐요. 이 개념을 내 말로 설명하고 예시 하나에 연결해 볼까요? 교안도 다시 살펴보면 좋아요." if pages else
+                "괜찮아요, 같이 생각해 봐요. 이 개념을 내 말로 설명하고 예시 하나에 연결해 볼까요?",
                 "page_no": pages[0]["page_no"] if pages else None}
     if "랩미팅 회의록" in instructions:
         questions = [m["body"] for m in payload["messages"] if m["role"] == "assistant"]
@@ -58,12 +58,13 @@ def demo_response(instructions: str, payload: dict) -> dict:
                           for w in payload["weeks"]]}
     member = payload["member"]
     previous = payload["messages"]
-    lead = previous[-1]["body"][:45] if previous else payload["initial_note"][:45]
+    last_answer = next((m["body"].strip() for m in reversed(previous) if m["role"] == "user"), "")
+    lead = last_answer[:45] if len(last_answer) >= 10 and "모르" not in last_answer else payload["study_goal"][:45]
     questions = {
-        "개념과 정의": f"'{lead}'에서 핵심 개념을 한 문장으로 정의한다면 어떻게 설명할까요?",
-        "예시와 적용": f"'{lead}'을 실제 예시 하나에 적용하면 어떤 결과가 나올까요?",
-        "앞 주차와의 연결": f"'{lead}'은 앞에서 배운 내용과 어떻게 연결될까요?",
-        "다른 해석": f"'{lead}'을 다른 관점에서 설명할 방법도 있을까요?",
+        "개념과 정의": f"궁금한 게 있어요! '{lead}'에서 가장 중요한 개념은 뭐라고 생각해요?",
+        "예시와 적용": f"그럼 '{lead}'을 실제 예시에 써 보면 어떻게 될까요?",
+        "앞 주차와의 연결": f"'{lead}'이랑 앞에서 배운 내용은 어떻게 이어질까요?",
+        "다른 해석": f"재밌네요. '{lead}'을 다른 관점에서도 볼 수 있을까요?",
     }
     pages = payload["source_pages"]
     return {"question": questions.get(member["perspective"], questions["개념과 정의"]),
