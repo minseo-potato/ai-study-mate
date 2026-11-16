@@ -295,7 +295,8 @@ async def next_question(session_id: int):
         "당신은 채점자가 아닌 같은 주제를 공부하는 친근한 동료입니다. 한국어 질문 하나만 하세요. "
         "친구와 이야기하듯 자연스러운 존댓말을 사용하고, 짧게 물어보세요. 칭찬을 반복하거나 시험 문제처럼 말하지 마세요. "
         "동료의 level과 understanding을 현재 이해 상태로 참고하고, perspective는 시작 관점으로만 사용하세요. "
-        "사용자 답변에 맞춰 후속 질문을 바꾸고 다른 동료의 질문도 확인하세요. 발표문이 비어 있으면 current_source_pages의 교안 내용을 중심으로 질문하세요. "
+        "사용자 답변과 직전 동료의 반응에 맞춰 후속 질문을 바꾸고 다른 동료의 질문도 확인하세요. 발표문이 비어 있으면 current_source_pages의 교안 내용을 중심으로 질문하세요. "
+        "사용자 답변을 그대로 인용해 질문하지 마세요. 무관한 답변을 받았다면 교안의 핵심 개념으로 부드럽게 돌아오세요. "
         "include_previous_questions가 참이면 이전 주차의 기록과 교안도 질문할 수 있습니다. 거짓이면 이번 주차 범위만 질문하세요. "
         "거짓이어도 member의 누적 understanding을 지우거나 되돌리지 마세요. "
         "기존 질문을 반복하지 마세요. 바로 정답을 알려주지 마세요. 교안 근거가 있는 경우 page_no에 제공된 쪽수 하나를 쓰세요. "
@@ -311,6 +312,8 @@ async def next_question(session_id: int):
         raise HTTPException(502, "질문이 비어 있습니다.")
     valid_pages = {p["page_no"] for p in pages + previous_pages}
     page_no = result.get("page_no") if result.get("page_no") in valid_pages else None
+    if pages and not session["initial_note"] and page_no is None:
+        raise HTTPException(502, "교안 근거가 있는 질문을 만들지 못했습니다. 다시 시도해 주세요.")
     with connect() as db:
         current = session_data(db, session_id)
         if len(current["messages"]) != len(session["messages"]):
@@ -368,18 +371,53 @@ class Answer(BaseModel):
 
 
 @app.post("/sessions/{session_id}/answer")
-def answer(session_id: int, body: Answer):
+async def answer(session_id: int, body: Answer):
     with connect() as db:
         session = session_data(db, session_id)
         if session["status"] != "active" or not session["messages"] or session["messages"][-1]["role"] not in ("assistant", "assistant_hint"):
             raise HTTPException(409, "답할 질문이 없습니다.")
+        question = next(m for m in reversed(session["messages"]) if m["role"] == "assistant")
+        study = study_data(db, session["study_id"])
+        week = study["weeks"][session["week_no"] - 1]
+        pages = source_pages(db, session["study_id"], week["scope"], question["body"],
+                             session["week_no"], len(study["weeks"]))
+        if question["page_no"] is not None and question["page_no"] not in {p["page_no"] for p in pages}:
+            cited = db.execute("SELECT page_no,body FROM pages WHERE study_id=? AND page_no=?",
+                               (session["study_id"], question["page_no"])).fetchone()
+            if cited and week["include_previous_questions"]:
+                pages = [{"page_no": cited["page_no"], "text": cited["body"][:2500]}] + pages[:2]
+        member = next(m for m in study["members"] if m["member_no"] == question["member_no"])
+    result = await generate_json(
+        "답변 검토: 스터디 동료로서 사용자의 답변이 직전 질문에 실제로 답했는지 먼저 확인하세요. "
+        "교안 페이지가 있으면 그 내용과 맞는 부분, 다른 부분, 확인할 수 없는 부분을 구분하세요. "
+        "교안이 없거나 근거가 부족하면 정답이라고 단정하지 마세요. 무관하거나 장난스러운 답변은 인용하지 말고 "
+        "질문으로 돌아올 수 있게 친절하게 말하세요. 답을 바로 길게 설명하기보다 이유나 예시를 부탁하세요. "
+        "자연스러운 한국어 존댓말 한두 문장으로 반응하세요. JSON 키는 reaction,alignment,page_no입니다. "
+        "alignment는 supported,partial,off_topic,uncertain 중 하나입니다. page_no는 제공된 교안 쪽수만 쓰세요.",
+        {"question": question["body"], "answer": body.text.strip(), "member": member,
+         "week": week, "source_pages": pages, "messages": session["messages"][-8:]},
+    )
+    reaction = str(result.get("reaction", "")).strip()
+    if not reaction:
+        raise HTTPException(502, "답변에 대한 반응을 만들지 못했습니다.")
+    alignment = result.get("alignment")
+    if alignment not in ("supported", "partial", "off_topic", "uncertain") or not pages:
+        alignment = "uncertain"
+    page_no = result.get("page_no") if result.get("page_no") in {p["page_no"] for p in pages} else None
+    with connect() as db:
+        current = session_data(db, session_id)
+        if current["status"] != "active" or len(current["messages"]) != len(session["messages"]):
+            raise HTTPException(409, "세션이 변경되었습니다. 다시 시도해 주세요.")
         db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)",
                    (session_id, "user", body.text.strip()))
+        db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no) VALUES(?,?,?,?,?)",
+                   (session_id, "assistant_reaction", question["member_no"], reaction, page_no))
         if body.needs_review:
-            question = next(m["body"] for m in reversed(session["messages"]) if m["role"] == "assistant")
-            pending = session["unanswered"] + [question]
+            pending = session["unanswered"] + [question["body"]]
             db.execute("UPDATE sessions SET unanswered=? WHERE id=?", (dumps(pending), session_id))
-        return session_data(db, session_id)
+        response = session_data(db, session_id)
+        response["answer_alignment"] = alignment
+        return response
 
 
 class Finish(BaseModel):
@@ -396,16 +434,19 @@ async def finish(session_id: int, body: Finish):
         week = study["weeks"][session["week_no"] - 1]
         pages = source_pages(db, session["study_id"], week["scope"], body.revised_note,
                              session["week_no"], len(study["weeks"]))
+        pending = list(session["unanswered"])
+        if session["messages"] and session["messages"][-1]["role"] in ("assistant", "assistant_hint"):
+            pending.append(next(m["body"] for m in reversed(session["messages"]) if m["role"] == "assistant"))
     summary = await generate_json(
         "랩미팅 회의록을 한국어로 요약하세요. JSON 키는 summary, next_checks입니다. "
         "사용자 발언과 AI 질문을 구별하고, 근거 없는 사실을 확정하지 마세요. next_checks는 문자열 배열입니다.",
         {"initial_note": session["initial_note"], "revised_note": body.revised_note,
-         "messages": session["messages"], "unanswered": session["unanswered"], "source_pages": pages},
+         "messages": session["messages"], "unanswered": pending, "source_pages": pages},
     )
     checks = summary.get("next_checks", [])
     if not isinstance(checks, list):
         checks = []
-    checks = list(dict.fromkeys(session["unanswered"] + [str(x) for x in checks]))[:20]
+    checks = list(dict.fromkeys(pending + [str(x) for x in checks]))[:20]
     minutes = {"summary": str(summary.get("summary", "")), "source_pages": [p["page_no"] for p in pages],
                "initial_note": session["initial_note"], "revised_note": body.revised_note,
                "messages": session["messages"], "next_checks": checks}

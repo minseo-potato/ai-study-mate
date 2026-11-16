@@ -614,22 +614,31 @@ class _SessionPageState extends State<SessionPage> {
   }
   Future<void> refresh() async {
     try { final data = await Api.request('GET', '/sessions/${widget.id}');
-      if (mounted) { setState(() => session = data); scrollToLatest(); } }
+      if (mounted) {
+        setState(() => session = data); scrollToLatest();
+        final messages = data['messages'] as List;
+        if (data['status'] == 'active' && !busy &&
+            (messages.isEmpty || messages.last['role'] == 'assistant_reaction' || messages.last['role'] == 'user')) {
+          await act('question');
+        }
+      } }
     catch (e) { if (mounted) errorMessage(context, e); }
   }
-  Future<void> act(String path, [Map<String, dynamic>? body]) async {
+  Future<bool> act(String path, [Map<String, dynamic>? body]) async {
     setState(() => busy = true);
     try { final data = await Api.request('POST', '/sessions/${widget.id}/$path', body);
       if (mounted) { setState(() {
         session = data;
         if (path == 'answer') { answer.clear(); needsReview = false; }
       }); scrollToLatest(); }
-    } catch (e) { if (mounted) errorMessage(context, e); }
+      return true;
+    } catch (e) { if (mounted) errorMessage(context, e); return false; }
     finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> sendAnswer() async {
     if (answer.text.trim().isEmpty) { errorMessage(context, '생각나는 만큼만 적어 주세요.'); return; }
-    await act('answer', {'text': answer.text.trim(), 'needs_review': needsReview});
+    final saved = await act('answer', {'text': answer.text.trim(), 'needs_review': needsReview});
+    if (saved && mounted) await act('question');
   }
   Future<void> finish() async {
     final note = await showModalBottomSheet<String>(context: context, isScrollControlled: true,
@@ -699,12 +708,13 @@ class _SessionPageState extends State<SessionPage> {
             else ChatBubble(name: '나 · 처음 생각', text: s['initial_note'], mine: true),
             ...messages.map((m) => ChatBubble(
               name: m['role'] == 'assistant_hint' ? '${peerLabel(m['member_no'] as int)} · 힌트'
+                : m['role'] == 'assistant_reaction' ? '${peerLabel(m['member_no'] as int)} · 답변 확인'
                 : m['role'] == 'assistant' ? peerLabel(m['member_no'] as int) : '나',
               text: '${m['body']}', mine: m['role'] == 'user',
               peerNo: m['role'] == 'user' ? null : m['member_no'] as int,
               caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽 참고')),
             if (messages.isEmpty) const Center(child: Padding(
-              padding: EdgeInsets.all(18), child: Text('아래에서 질문을 받아 대화를 시작해 보세요.'))),
+              padding: EdgeInsets.all(18), child: Text('AI 친구가 첫 질문을 준비하고 있어요...'))),
             if (finished) ...[
               ChatBubble(name: '나 · 다시 정리한 생각', text: s['revised_note'], mine: true),
               const SizedBox(height: 14),
@@ -746,9 +756,10 @@ class _SessionPageState extends State<SessionPage> {
                     Checkbox(value: needsReview, onChanged: busy ? null : (v) => setState(() => needsReview = v ?? false)),
                     const Expanded(child: Text('이 질문은 다음 주에 다시 보고 싶어요', style: TextStyle(fontSize: 12))),
                   ]),
+                  TextButton(onPressed: busy ? null : finish, child: const Text('오늘 대화 마치기')),
                 ] else ...[
                   FilledButton.icon(onPressed: busy ? null : () => act('question'),
-                    icon: const Icon(Icons.chat_bubble_outline), label: const Text('친구들은 뭐가 궁금할까?')),
+                    icon: const Icon(Icons.refresh_rounded), label: const Text('다음 질문 불러오기')),
                   TextButton(onPressed: busy ? null : finish, child: const Text('오늘 이야기 정리하기')),
                 ],
               ]))),

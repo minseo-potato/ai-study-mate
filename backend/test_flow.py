@@ -28,6 +28,10 @@ def sample_pdf():
 
 
 async def fake_ai(instructions, payload):
+    if "답변 검토" in instructions:
+        pages = payload["source_pages"]
+        return {"reaction": "교안 내용을 떠올려 다시 설명해 볼까요?", "alignment": "supported",
+                "page_no": pages[0]["page_no"] if pages else None}
     if "교안 기반 설명" in instructions:
         pages = payload["source_pages"]
         return {"explanation": "훈련과 검증의 차이를 다시 생각해 보세요.",
@@ -47,6 +51,27 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_demo_study_reacts_and_follows_up_without_echoing_answer(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+            client = TestClient(app)
+            study = client.post("/studies", data={"title": "신경망", "goal": "학습과 배포 이해",
+                "start_date": "2026-11-16", "weeks": "2", "hours_per_week": "3", "member_count": "2"},
+                files={"pdf": ("guide.pdf", sample_pdf(), "application/pdf")}).json()
+            session_id = client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""}).json()["session_id"]
+            first = client.post(f"/sessions/{session_id}/question")
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(first.json()["messages"][0]["page_no"], 1)
+            answer = client.post(f"/sessions/{session_id}/answer", json={"text": "뭔소리야 동문서답이네"})
+            self.assertEqual(answer.status_code, 200, answer.text)
+            self.assertEqual(answer.json()["answer_alignment"], "off_topic")
+            self.assertNotIn("동문서답", answer.json()["messages"][-1]["body"])
+            follow_up = client.post(f"/sessions/{session_id}/question")
+            self.assertEqual(follow_up.status_code, 200, follow_up.text)
+            self.assertEqual([m["role"] for m in follow_up.json()["messages"][-3:]],
+                             ["user", "assistant_reaction", "assistant"])
+            self.assertNotIn("동문서답", follow_up.json()["messages"][-1]["body"])
+
     def test_demo_question_uses_goal_when_note_is_unclear(self):
         payload = {"member": {"perspective": "개념과 정의"},
                    "study_goal": "정렬 원리 설명", "initial_note": "ㅇㄹㅇㄹㅁㄴㅇㄹ",
@@ -64,6 +89,13 @@ class FlowTest(unittest.TestCase):
         question = demo_response("질문", payload)
         self.assertIn("Model drift", question["question"])
         self.assertEqual(question["page_no"], 2)
+
+    def test_demo_reaction_does_not_repeat_irrelevant_answer(self):
+        result = demo_response("답변 검토", {"question": "손실 함수란?", "answer": "뭔소리야 동문서답이네",
+            "source_pages": [{"page_no": 1, "text": "Loss measures prediction error."}]})
+        self.assertEqual(result["alignment"], "off_topic")
+        self.assertNotIn("동문서답", result["reaction"])
+        self.assertEqual(result["page_no"], 1)
 
     def test_study_without_pdf_can_start_chat(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
@@ -91,6 +123,9 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(hint.status_code, 200, hint.text)
             self.assertIsNone(hint.json()["messages"][-1]["page_no"])
             self.assertEqual(client.post(f"/sessions/{session.json()['session_id']}/question").status_code, 409)
+            answer = client.post(f"/sessions/{session.json()['session_id']}/answer", json={"text": "정렬 순서를 비교합니다."})
+            self.assertEqual(answer.status_code, 200, answer.text)
+            self.assertEqual(answer.json()["answer_alignment"], "uncertain")
 
     def test_study_to_minutes_and_next_week_review(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
@@ -138,6 +173,8 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(client.post(f"/sessions/{session_id}/explain").status_code, 409)
             answer = client.post(f"/sessions/{session_id}/answer", json={"text": "아직 모르겠습니다.", "needs_review": True})
             self.assertEqual(answer.status_code, 200, answer.text)
+            self.assertEqual([m["role"] for m in answer.json()["messages"][-2:]], ["user", "assistant_reaction"])
+            self.assertEqual(answer.json()["answer_alignment"], "supported")
             self.assertEqual(answer.json()["unanswered"], ["검증 데이터를 따로 두는 이유는 무엇인가요?"])
             done = client.post(f"/sessions/{session_id}/finish", json={"revised_note": "훈련 데이터로 가중치를 바꾸고 검증 데이터로 일반화를 확인합니다."})
             self.assertEqual(done.status_code, 200, done.text)
