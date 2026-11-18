@@ -159,7 +159,7 @@ class HomePage extends StatefulWidget {
 }
 class _HomePageState extends State<HomePage> {
   List<dynamic> studies = [];
-  bool demoMode = false;
+  bool demoMode = false, aiReady = false;
   bool loading = true;
   String? loadError;
   @override void initState() { super.initState(); refresh(); }
@@ -168,7 +168,10 @@ class _HomePageState extends State<HomePage> {
     try {
       final health = await Api.request('GET', '/health');
       final items = await Api.request('GET', '/studies');
-      if (mounted) setState(() { studies = items; demoMode = health['demo_mode'] == true; loading = false; });
+      if (mounted) {
+        setState(() { studies = items; demoMode = health['demo_mode'] == true;
+          aiReady = health['ai_ready'] == true; loading = false; });
+      }
     }
     catch (e) { if (mounted) { setState(() { loading = false; loadError = e is http.ClientException
       ? '서버에 연결할 수 없습니다. 서버를 켜고 다시 시도해 주세요.' : '$e'; }); } }
@@ -199,6 +202,10 @@ class _HomePageState extends State<HomePage> {
       ])),
       if (demoMode) const Padding(padding: EdgeInsets.fromLTRB(4, 12, 4, 0),
         child: Text('지금은 체험 모드예요. 질문과 정리는 예시로 보여드려요.', style: TextStyle(color: Color(0xFF64748B), fontSize: 13))),
+      if (!loading && !demoMode && !aiReady) const Padding(
+        padding: EdgeInsets.fromLTRB(4, 12, 4, 0),
+        child: Text('AI 연결 전이에요. 서버의 backend/.env에 API 키를 설정한 뒤 다시 시작해 주세요.',
+          style: TextStyle(color: Color(0xFF9A5A12), fontSize: 13))),
       const SectionTitle('이렇게 진행해요'),
       const SoftPanel(child: Text('① 주제 고르기  →  ② 이번 주 공부하기  →  ③ AI 친구들과 이야기하기')),
       if (loading) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
@@ -602,6 +609,7 @@ class _SessionPageState extends State<SessionPage> {
   final answer = TextEditingController(), revised = TextEditingController();
   final scrollController = ScrollController();
   bool needsReview = false, busy = false;
+  String? busyAction;
   @override void initState() { super.initState(); refresh(); }
   @override void dispose() { answer.dispose(); revised.dispose(); scrollController.dispose(); super.dispose(); }
   void scrollToLatest() {
@@ -625,7 +633,7 @@ class _SessionPageState extends State<SessionPage> {
     catch (e) { if (mounted) errorMessage(context, e); }
   }
   Future<bool> act(String path, [Map<String, dynamic>? body]) async {
-    setState(() => busy = true);
+    setState(() { busy = true; busyAction = path; });
     try { final data = await Api.request('POST', '/sessions/${widget.id}/$path', body);
       if (mounted) { setState(() {
         session = data;
@@ -633,7 +641,7 @@ class _SessionPageState extends State<SessionPage> {
       }); scrollToLatest(); }
       return true;
     } catch (e) { if (mounted) errorMessage(context, e); return false; }
-    finally { if (mounted) setState(() => busy = false); }
+    finally { if (mounted) setState(() { busy = false; busyAction = null; }); }
   }
   Future<void> sendAnswer() async {
     if (answer.text.trim().isEmpty) { errorMessage(context, '생각나는 만큼만 적어 주세요.'); return; }
@@ -709,12 +717,17 @@ class _SessionPageState extends State<SessionPage> {
             ...messages.map((m) => ChatBubble(
               name: m['role'] == 'assistant_hint' ? '${peerLabel(m['member_no'] as int)} · 힌트'
                 : m['role'] == 'assistant_reaction' ? '${peerLabel(m['member_no'] as int)} · 답변 확인'
+                : m['role'] == 'assistant_comment' ? '${peerLabel(m['member_no'] as int)} · 한마디'
                 : m['role'] == 'assistant' ? peerLabel(m['member_no'] as int) : '나',
               text: '${m['body']}', mine: m['role'] == 'user',
               peerNo: m['role'] == 'user' ? null : m['member_no'] as int,
               caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽 참고')),
             if (messages.isEmpty) const Center(child: Padding(
               padding: EdgeInsets.all(18), child: Text('AI 친구가 첫 질문을 준비하고 있어요...'))),
+            if (busyAction == 'question' || busyAction == 'answer')
+              Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(busyAction == 'question' ? 'AI 친구가 생각하고 있어요...' : 'AI 친구가 답을 읽고 있어요...',
+                  style: const TextStyle(color: Color(0xFF536887), fontSize: 12))),
             if (finished) ...[
               ChatBubble(name: '나 · 다시 정리한 생각', text: s['revised_note'], mine: true),
               const SizedBox(height: 14),
@@ -745,7 +758,7 @@ class _SessionPageState extends State<SessionPage> {
                       icon: const Icon(Icons.lightbulb_outline), label: const Text('힌트 좀 줄래?'))),
                   Row(children: [
                     Expanded(child: TextField(controller: answer, minLines: 1, maxLines: 3,
-                      decoration: const InputDecoration(hintText: '내 생각을 적어 볼까요?'))),
+                      decoration: const InputDecoration(hintText: '답하거나 궁금한 걸 물어봐요'))),
                     const SizedBox(width: 8),
                     IconButton.filled(onPressed: busy ? null : sendAnswer,
                       style: IconButton.styleFrom(backgroundColor: const Color(0xFF3F7FF3),

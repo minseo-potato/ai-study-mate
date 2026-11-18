@@ -51,7 +51,8 @@ def study_data(db, study_id):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "demo_mode": os.getenv("DEMO_MODE") == "1"}
+    return {"ok": True, "demo_mode": os.getenv("DEMO_MODE") == "1",
+            "ai_ready": bool(os.getenv("OPENAI_API_KEY")) and os.getenv("DEMO_MODE") != "1"}
 
 
 @app.get("/studies")
@@ -292,17 +293,20 @@ async def next_question(session_id: int):
                         previous_pages.append(page)
                         seen.add(page["page_no"])
     result = await generate_json(
-        "당신은 채점자가 아닌 같은 주제를 공부하는 친근한 동료입니다. 한국어 질문 하나만 하세요. "
-        "친구와 이야기하듯 자연스러운 존댓말을 사용하고, 짧게 물어보세요. 칭찬을 반복하거나 시험 문제처럼 말하지 마세요. "
-        "동료의 level과 understanding을 현재 이해 상태로 참고하고, perspective는 시작 관점으로만 사용하세요. "
-        "사용자 답변과 직전 동료의 반응에 맞춰 후속 질문을 바꾸고 다른 동료의 질문도 확인하세요. 발표문이 비어 있으면 current_source_pages의 교안 내용을 중심으로 질문하세요. "
+        "여러 사람이 함께 공부하는 대화의 다음 차례를 만드세요. JSON 키는 speaker_no,comment,comment_member_no,question,page_no,understanding입니다. "
+        "members 중 대화 맥락에 어울리는 speaker_no를 고르세요. suggested_member_no는 참고일 뿐이고, 필요하면 같은 동료가 후속 질문을 해도 됩니다. "
+        "comment는 다른 동료의 짧은 공감·보충 의견이 실제로 도움이 될 때만 넣고, 아니면 빈 문자열로 두세요. comment_member_no는 그 동료 번호입니다. "
+        "질문은 한 개만 하세요. 각 동료의 수준·누적 이해·앞선 발언을 반영하고, 반복적인 칭찬이나 시험 문제 같은 말투를 피하세요. "
+        "사용자 답변과 직전 동료의 반응에 맞춰 후속 질문을 바꾸세요. 발표문이 비어 있으면 current_source_pages의 교안 내용을 중심으로 질문하세요. "
         "사용자 답변을 그대로 인용해 질문하지 마세요. 무관한 답변을 받았다면 교안의 핵심 개념으로 부드럽게 돌아오세요. "
         "include_previous_questions가 참이면 이전 주차의 기록과 교안도 질문할 수 있습니다. 거짓이면 이번 주차 범위만 질문하세요. "
-        "거짓이어도 member의 누적 understanding을 지우거나 되돌리지 마세요. "
-        "기존 질문을 반복하지 마세요. 바로 정답을 알려주지 마세요. 교안 근거가 있는 경우 page_no에 제공된 쪽수 하나를 쓰세요. "
-        "JSON 키는 question,page_no,understanding입니다. understanding은 이 동료가 이번 대화에서 이해한 내용을 짧게 적으세요.",
+        "거짓이어도 동료들의 누적 understanding을 지우거나 되돌리지 마세요. 기존 질문을 반복하지 말고 바로 정답을 알려주지 마세요. "
+        "교안 근거가 있다면 page_no에 제공된 쪽수 하나를 쓰고, understanding에는 질문자가 이번 대화에서 이해한 내용을 짧게 적으세요.",
         {"study_goal": study["goal"], "week": week, "member": member,
+         "members": study["members"], "suggested_member_no": member["member_no"],
          "initial_note": session["initial_note"], "messages": session["messages"][-12:],
+         "question_count": sum(m["role"] == "assistant" for m in session["messages"]),
+         "asked_questions": [m["body"] for m in session["messages"] if m["role"] == "assistant"][-20:],
          "include_previous_questions": bool(week["include_previous_questions"]),
          "current_source_pages": pages, "previous_source_pages": previous_pages,
          "previous_study": previous_context, "source_pages": pages + previous_pages},
@@ -310,6 +314,27 @@ async def next_question(session_id: int):
     question = str(result.get("question", "")).strip()
     if not question:
         raise HTTPException(502, "질문이 비어 있습니다.")
+    prior_questions = {m["body"].strip() for m in session["messages"] if m["role"] == "assistant"}
+    if question in prior_questions:
+        result = await generate_json(
+            "앞선 질문과 겹쳤습니다. 아래 질문과 다른 새 질문 한 개를 만드세요. "
+            "JSON 키는 speaker_no,comment,comment_member_no,question,page_no,understanding입니다. "
+            "이번 주 범위와 교안에 근거하고, 답변의 맥락을 이어 가세요.",
+            {"study_goal": study["goal"], "week": week, "member": member,
+             "members": study["members"], "messages": session["messages"][-12:],
+             "question_count": sum(m["role"] == "assistant" for m in session["messages"]),
+             "asked_questions": list(prior_questions), "source_pages": pages + previous_pages,
+             "current_source_pages": pages, "previous_source_pages": previous_pages},
+        )
+        question = str(result.get("question", "")).strip()
+        if not question or question in prior_questions:
+            raise HTTPException(502, "새 질문을 만들지 못했습니다. 다시 시도해 주세요.")
+    member_no = result.get("speaker_no")
+    speaker = next((m for m in study["members"] if m["member_no"] == member_no), member)
+    comment = str(result.get("comment") or "").strip()[:500]
+    comment_member_no = result.get("comment_member_no")
+    if comment_member_no not in {m["member_no"] for m in study["members"]} or comment_member_no == speaker["member_no"]:
+        comment = ""
     valid_pages = {p["page_no"] for p in pages + previous_pages}
     page_no = result.get("page_no") if result.get("page_no") in valid_pages else None
     if pages and not session["initial_note"] and page_no is None:
@@ -318,12 +343,16 @@ async def next_question(session_id: int):
         current = session_data(db, session_id)
         if len(current["messages"]) != len(session["messages"]):
             raise HTTPException(409, "세션이 변경되었습니다. 다시 시도해 주세요.")
+        if comment:
+            db.execute("INSERT INTO messages(session_id,role,member_no,body) VALUES(?,?,?,?)",
+                       (session_id, "assistant_comment", comment_member_no, comment))
         db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no) VALUES(?,?,?,?,?)",
-                   (session_id, "assistant", member["member_no"], question, page_no))
+                   (session_id, "assistant", speaker["member_no"], question, page_no))
         db.execute("UPDATE sessions SET next_member=? WHERE id=?",
-                   (session["next_member"] % len(study["members"]) + 1, session_id))
+                   (speaker["member_no"] % len(study["members"]) + 1, session_id))
         db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
-                   (str(result.get("understanding") or member["understanding"])[:500], session["study_id"], member["member_no"]))
+                   (str(result.get("understanding") or speaker["understanding"])[:500],
+                    session["study_id"], speaker["member_no"]))
         return session_data(db, session_id)
 
 
@@ -379,7 +408,8 @@ async def answer(session_id: int, body: Answer):
         question = next(m for m in reversed(session["messages"]) if m["role"] == "assistant")
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
-        pages = source_pages(db, session["study_id"], week["scope"], question["body"],
+        page_query = body.text.strip() if "?" in body.text or "？" in body.text else question["body"] + " " + body.text.strip()
+        pages = source_pages(db, session["study_id"], week["scope"], page_query,
                              session["week_no"], len(study["weeks"]))
         if question["page_no"] is not None and question["page_no"] not in {p["page_no"] for p in pages}:
             cited = db.execute("SELECT page_no,body FROM pages WHERE study_id=? AND page_no=?",
@@ -391,9 +421,10 @@ async def answer(session_id: int, body: Answer):
         "답변 검토: 스터디 동료로서 사용자의 답변이 직전 질문에 실제로 답했는지 먼저 확인하세요. "
         "교안 페이지가 있으면 그 내용과 맞는 부분, 다른 부분, 확인할 수 없는 부분을 구분하세요. "
         "교안이 없거나 근거가 부족하면 정답이라고 단정하지 마세요. 무관하거나 장난스러운 답변은 인용하지 말고 "
-        "질문으로 돌아올 수 있게 친절하게 말하세요. 답을 바로 길게 설명하기보다 이유나 예시를 부탁하세요. "
-        "자연스러운 한국어 존댓말 한두 문장으로 반응하세요. JSON 키는 reaction,alignment,page_no입니다. "
-        "alignment는 supported,partial,off_topic,uncertain 중 하나입니다. page_no는 제공된 교안 쪽수만 쓰세요.",
+        "질문으로 돌아올 수 있게 친절하게 말하세요. 사용자가 역으로 질문했다면 그 질문에 교안 기준으로 짧게 답하고 대화를 이어가세요. "
+        "다른 동료들도 대화를 듣고 있으므로 이번 답에서 새로 이해한 점을 understanding에 반영하세요. "
+        "자연스러운 한국어 존댓말 한두 문장으로 반응하세요. JSON 키는 reaction,alignment,page_no,understanding입니다. "
+        "alignment는 supported,partial,off_topic,uncertain,user_question 중 하나입니다. page_no는 제공된 교안 쪽수만 쓰세요.",
         {"question": question["body"], "answer": body.text.strip(), "member": member,
          "week": week, "source_pages": pages, "messages": session["messages"][-8:]},
     )
@@ -401,7 +432,7 @@ async def answer(session_id: int, body: Answer):
     if not reaction:
         raise HTTPException(502, "답변에 대한 반응을 만들지 못했습니다.")
     alignment = result.get("alignment")
-    if alignment not in ("supported", "partial", "off_topic", "uncertain") or not pages:
+    if alignment not in ("supported", "partial", "off_topic", "uncertain", "user_question") or (not pages and alignment != "user_question"):
         alignment = "uncertain"
     page_no = result.get("page_no") if result.get("page_no") in {p["page_no"] for p in pages} else None
     with connect() as db:
@@ -412,6 +443,9 @@ async def answer(session_id: int, body: Answer):
                    (session_id, "user", body.text.strip()))
         db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no) VALUES(?,?,?,?,?)",
                    (session_id, "assistant_reaction", question["member_no"], reaction, page_no))
+        if result.get("understanding"):
+            db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
+                       (str(result["understanding"])[:500], session["study_id"], question["member_no"]))
         if body.needs_review:
             pending = session["unanswered"] + [question["body"]]
             db.execute("UPDATE sessions SET unanswered=? WHERE id=?", (dumps(pending), session_id))

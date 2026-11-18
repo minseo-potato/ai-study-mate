@@ -1,5 +1,6 @@
 """Run with: python -m unittest test_flow.py"""
 import io
+import asyncio
 import json
 import os
 import tempfile
@@ -7,9 +8,10 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import httpx
 from reportlab.pdfgen import canvas
 
-from ai import demo_response
+from ai import demo_response, generate_json
 from main import app
 
 
@@ -45,12 +47,58 @@ async def fake_ai(instructions, payload):
     if "랩미팅 회의록" in instructions:
         return {"summary": "손실 함수와 검증 데이터를 다시 설명했다.", "next_checks": ["일반화 개념 확인"]}
     current_pages = payload.get("current_source_pages", payload["source_pages"])
-    return {"question": "검증 데이터를 따로 두는 이유는 무엇인가요?",
+    suffix = f" ({payload.get('question_count', 0) + 1}번째 질문)" if payload.get("question_count") else ""
+    return {"question": "검증 데이터를 따로 두는 이유는 무엇인가요?" + suffix,
             "page_no": current_pages[0]["page_no"] if current_pages else None,
             "understanding": "훈련과 검증을 구분했다."}
 
 
 class FlowTest(unittest.TestCase):
+    def test_responses_api_adapter_uses_server_key_and_parses_json(self):
+        seen = {}
+        def respond(request):
+            seen["authorization"] = request.headers.get("Authorization")
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"output": [{"type": "message", "content": [
+                {"type": "output_text", "text": '{"question":"같이 생각해 볼까요?"}'}]}]})
+
+        client_class = httpx.AsyncClient
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-only-key", "OPENAI_MODEL": "gpt-6-sol", "DEMO_MODE": "0"}), \
+             patch("ai.httpx.AsyncClient", side_effect=lambda **kwargs: client_class(
+                 transport=httpx.MockTransport(respond))):
+            result = asyncio.run(generate_json("질문", {"topic": "정렬"}))
+        self.assertEqual(result["question"], "같이 생각해 볼까요?")
+        self.assertEqual(seen["authorization"], "Bearer test-only-key")
+        self.assertEqual(seen["body"]["model"], "gpt-6-sol")
+        self.assertFalse(seen["body"]["store"])
+
+    def test_demo_reacts_to_user_question(self):
+        result = demo_response("답변 검토", {"question": "손실 함수란?",
+            "answer": "검증 데이터에는 어떤 차이가 있어요?",
+            "source_pages": [{"page_no": 1, "text": "Validation data checks generalization."}]})
+        self.assertEqual(result["alignment"], "user_question")
+        self.assertIn("궁금한 점", result["reaction"])
+
+    def test_peer_can_join_and_another_peer_can_ask(self):
+        async def social_ai(instructions, payload):
+            if "suggested_member_no" in payload:
+                return {"speaker_no": 2, "comment_member_no": 1, "comment": "저도 궁금했어요.",
+                        "question": "정렬 방법을 실제 예시에 적용해 볼까요?", "page_no": None,
+                        "understanding": "정렬 예시를 더 알고 싶다."}
+            return await fake_ai(instructions, payload)
+
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", social_ai):
+            client = TestClient(app)
+            study = client.post("/studies", data={"title": "정렬", "goal": "정렬 방법 비교",
+                "start_date": "2026-11-18", "weeks": "2", "hours_per_week": "3", "member_count": "2"}).json()
+            session_id = client.post(f"/studies/{study['id']}/weeks/1/sessions",
+                json={"text": "정렬의 원리와 예시를 공부했습니다."}).json()["session_id"]
+            result = client.post(f"/sessions/{session_id}/question")
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual([(m["role"], m["member_no"]) for m in result.json()["messages"]],
+                             [("assistant_comment", 1), ("assistant", 2)])
+            self.assertEqual(result.json()["next_member"], 1)
+
     def test_demo_study_reacts_and_follows_up_without_echoing_answer(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
@@ -61,7 +109,9 @@ class FlowTest(unittest.TestCase):
             session_id = client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""}).json()["session_id"]
             first = client.post(f"/sessions/{session_id}/question")
             self.assertEqual(first.status_code, 200, first.text)
-            self.assertEqual(first.json()["messages"][0]["page_no"], 1)
+            self.assertEqual([m["role"] for m in first.json()["messages"]],
+                             ["assistant_comment", "assistant"])
+            self.assertEqual(first.json()["messages"][-1]["page_no"], 1)
             answer = client.post(f"/sessions/{session_id}/answer", json={"text": "뭔소리야 동문서답이네"})
             self.assertEqual(answer.status_code, 200, answer.text)
             self.assertEqual(answer.json()["answer_alignment"], "off_topic")
