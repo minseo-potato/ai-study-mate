@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 import httpx
 from reportlab.pdfgen import canvas
 
@@ -54,6 +55,19 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_api_credit_error_is_actionable(self):
+        client_class = httpx.AsyncClient
+        def no_credits(request):
+            return httpx.Response(429, json={"error": {"type": "insufficient_quota",
+                "code": "credit_balance_exhausted"}})
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-only-key", "DEMO_MODE": "0"}), \
+             patch("ai.httpx.AsyncClient", side_effect=lambda **kwargs: client_class(
+                 transport=httpx.MockTransport(no_credits))):
+            with self.assertRaises(HTTPException) as failure:
+                asyncio.run(generate_json("질문", {"topic": "정렬"}))
+        self.assertEqual(failure.exception.status_code, 503)
+        self.assertIn("크레딧", failure.exception.detail)
+
     def test_responses_api_adapter_uses_server_key_and_parses_json(self):
         seen = {}
         def respond(request):

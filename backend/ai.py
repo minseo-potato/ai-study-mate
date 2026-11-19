@@ -38,6 +38,13 @@ async def generate_json(instructions: str, payload: dict) -> dict:
         if content.startswith("```"):
             content = content.strip("`").removeprefix("json").strip()
         return json.loads(content)
+    except httpx.HTTPStatusError as exc:
+        error = exc.response.json().get("error", {}) if exc.response.headers.get("content-type", "").startswith("application/json") else {}
+        if error.get("code") == "credit_balance_exhausted" or error.get("type") == "insufficient_quota":
+            raise HTTPException(503, "OpenAI API 크레딧이 없습니다. Platform 결제 설정에서 크레딧을 추가해야 실제 AI 대화를 사용할 수 있어요.") from exc
+        if exc.response.status_code == 401:
+            raise HTTPException(503, "OpenAI API 키가 유효하지 않습니다. 서버의 키 설정을 확인해 주세요.") from exc
+        raise HTTPException(502, f"AI 요청이 거절됐습니다: HTTP {exc.response.status_code}") from exc
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         raise HTTPException(502, f"AI 응답을 처리하지 못했습니다: {type(exc).__name__}") from exc
 
