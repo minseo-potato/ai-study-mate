@@ -69,7 +69,7 @@ class StudyMateApp extends StatelessWidget {
       outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
     ),
-    home: const HomePage(),
+    home: const RoomShell(),
   );
 }
 
@@ -153,77 +153,84 @@ String weekStatusLabel(String status) => switch (status) {
   _ => '시작 전',
 };
 
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
-  @override State<HomePage> createState() => _HomePageState();
+class RoomShell extends StatefulWidget {
+  const RoomShell({super.key});
+  @override State<RoomShell> createState() => _RoomShellState();
 }
-class _HomePageState extends State<HomePage> {
+class _RoomShellState extends State<RoomShell> {
+  final scaffoldKey = GlobalKey<ScaffoldState>();
   List<dynamic> studies = [];
-  bool demoMode = false, aiReady = false;
-  bool loading = true;
+  int? selectedStudyId, sessionId;
+  String roomTitle = '';
+  bool loading = true, demoMode = false;
   String? loadError;
   @override void initState() { super.initState(); refresh(); }
-  Future<void> refresh() async {
-    if (mounted) setState(() { loading = true; loadError = null; });
+  Future<void> refresh([int? preferredId]) async {
+    setState(() { loading = true; loadError = null; });
     try {
       final health = await Api.request('GET', '/health');
-      final items = await Api.request('GET', '/studies');
-      if (mounted) {
-        setState(() { studies = items; demoMode = health['demo_mode'] == true;
-          aiReady = health['ai_ready'] == true; loading = false; });
-      }
-    }
-    catch (e) { if (mounted) { setState(() { loading = false; loadError = e is http.ClientException
-      ? '서버에 연결할 수 없습니다. 서버를 켜고 다시 시도해 주세요.' : '$e'; }); } }
+      final items = await Api.request('GET', '/studies') as List<dynamic>;
+      if (!mounted) return;
+      setState(() { studies = items; demoMode = health['demo_mode'] == true; });
+      if (items.isNotEmpty) {
+        final id = preferredId ?? selectedStudyId ?? items.first['id'] as int;
+        await openRoom(items.firstWhere((s) => s['id'] == id, orElse: () => items.first));
+      } else { setState(() { selectedStudyId = null; sessionId = null; }); }
+    } catch (e) { if (mounted) { setState(() { loadError = e is http.ClientException
+      ? '서버에 연결할 수 없어요. 서버를 켜고 다시 시도해 주세요.' : '$e'; }); } }
+    finally { if (mounted) setState(() => loading = false); }
   }
-  Future<void> openCreate() async {
+  Future<void> openRoom(dynamic item) async {
+    try {
+      final id = item['id'] as int;
+      final study = await Api.request('GET', '/studies/$id');
+      final weeks = study['weeks'] as List<dynamic>;
+      final week = weeks.firstWhere((w) => w['status'] != 'complete', orElse: () => weeks.last);
+      final active = week['active_session_id'];
+      final roomSession = active ?? (await Api.request('POST',
+        '/studies/$id/weeks/${week['week_no']}/sessions', {'text': ''}))['session_id'];
+      if (mounted) setState(() { selectedStudyId = id; roomTitle = item['title']; sessionId = roomSession as int; });
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  Future<void> createRoom() async {
+    scaffoldKey.currentState?.closeDrawer();
     final id = await Navigator.push<int>(context, MaterialPageRoute(builder: (_) => const CreatePage()));
-    if (!mounted) return;
-    if (id != null) {
-      await Navigator.push(context, MaterialPageRoute(builder: (_) => StudyPage(id: id)));
-    }
-    if (mounted) refresh();
+    if (id != null && mounted) await refresh(id);
   }
-  @override Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('AI 스터디메이트')),
-    body: PageContent(children: [
-      SoftPanel(color: const Color(0xFFEAF3FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const CircleAvatar(radius: 28, backgroundColor: Color(0xFFD4E6FF),
-          child: Icon(Icons.smart_toy_rounded, size: 30, color: Color(0xFF3F7FF3))),
-        const SizedBox(height: 14),
-        Text('오늘도 같이 공부해요!',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: const Color(0xFF0B1B43))),
-        const SizedBox(height: 8),
-        const Text('공부할 주제만 정해 주세요. AI 친구들이 옆에서 함께할게요.',
-          style: TextStyle(color: Color(0xFF536887))),
-        const SizedBox(height: 18),
-        FilledButton.icon(onPressed: openCreate,
-          icon: const Icon(Icons.add), label: const Text('새 스터디 만들기')),
-      ])),
-      if (demoMode) const Padding(padding: EdgeInsets.fromLTRB(4, 12, 4, 0),
-        child: Text('지금은 체험 모드예요. 질문과 정리는 예시로 보여드려요.', style: TextStyle(color: Color(0xFF64748B), fontSize: 13))),
-      if (!loading && !demoMode && !aiReady) const Padding(
-        padding: EdgeInsets.fromLTRB(4, 12, 4, 0),
-        child: Text('AI 연결 전이에요. 서버의 backend/.env에 API 키를 설정한 뒤 다시 시작해 주세요.',
-          style: TextStyle(color: Color(0xFF9A5A12), fontSize: 13))),
-      const SectionTitle('이렇게 진행해요'),
-      const SoftPanel(child: Text('① 주제 고르기  →  ② 이번 주 공부하기  →  ③ AI 친구들과 이야기하기')),
-      if (loading) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
-      if (loadError != null) SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(loadError!), const SizedBox(height: 12),
-        OutlinedButton.icon(onPressed: refresh, icon: const Icon(Icons.refresh), label: const Text('다시 시도')),
-      ])),
-      SectionTitle('내 스터디', detail: '${studies.length}개'),
-      if (!loading && loadError == null && studies.isEmpty)
-        const SoftPanel(child: Text('아직 스터디가 없네요. 공부하고 싶은 주제로 하나 만들어 볼까요?')),
-      ...studies.map((s) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        leading: const CircleAvatar(backgroundColor: Color(0xFFEAF2FF),
-          child: Icon(Icons.smart_toy_rounded, color: Color(0xFF3F7FF3))),
-        title: Text(s['title'], style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Padding(padding: const EdgeInsets.only(top: 5), child: Text(s['goal'], maxLines: 2, overflow: TextOverflow.ellipsis)),
-        trailing: const Icon(Icons.chevron_right_rounded), onTap: () => Navigator.push(context,
-          MaterialPageRoute(builder: (_) => StudyPage(id: s['id']))).then((_) => refresh())))),
-    ]),
+  Future<void> pinRoom(int id) async {
+    await Api.request('PUT', '/studies/$id/pin');
+    if (mounted) await refresh(id);
+  }
+  @override Widget build(BuildContext context) => Scaffold(key: scaffoldKey,
+    drawer: Drawer(child: SafeArea(child: Column(children: [
+      const ListTile(title: Text('스터디 채팅방', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700))),
+      if (demoMode) const ListTile(title: Text('체험 모드'), subtitle: Text('AI 답변은 예시로 보여드려요.')),
+      Expanded(child: ListView(children: studies.map((s) => ListTile(
+        selected: selectedStudyId == s['id'],
+        leading: const CircleAvatar(child: Icon(Icons.smart_toy_rounded)),
+        title: Text(s['title']),
+        subtitle: Text('${s['pinned'] == 1 ? '📌 시작할 방 · ' : ''}${s['goal']}',
+          maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: IconButton(tooltip: '앱 시작 방으로 고정',
+          icon: Icon(s['pinned'] == 1 ? Icons.push_pin : Icons.push_pin_outlined),
+          onPressed: () => pinRoom(s['id'] as int)),
+        onTap: () { scaffoldKey.currentState?.closeDrawer(); openRoom(s); },
+      )).toList())),
+      ListTile(leading: const Icon(Icons.add_circle_outline), title: const Text('새 채팅방 만들기'), onTap: createRoom),
+      if (selectedStudyId != null) ListTile(leading: const Icon(Icons.calendar_month_outlined),
+        title: const Text('학습 계획과 기록'), onTap: () async {
+          scaffoldKey.currentState?.closeDrawer();
+          await Navigator.push(context, MaterialPageRoute(builder: (_) => StudyPage(id: selectedStudyId!)));
+          if (mounted) refresh(selectedStudyId);
+        }),
+    ]))),
+    body: loading ? const Center(child: CircularProgressIndicator())
+      : loadError != null ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(loadError!), TextButton(onPressed: refresh, child: const Text('다시 시도'))]))
+      : sessionId == null ? Center(child: FilledButton.icon(onPressed: createRoom,
+          icon: const Icon(Icons.add), label: const Text('첫 스터디 채팅방 만들기')))
+      : SessionPage(key: ValueKey(sessionId), id: sessionId!, studyTitle: roomTitle,
+          onMenu: () => scaffoldKey.currentState?.openDrawer(), onFinished: () => refresh(selectedStudyId)),
   );
 }
 
@@ -265,7 +272,7 @@ class _CreatePageState extends State<CreatePage> {
       final profiles = List.generate(memberCount, (i) => {
         'level': peerLevels[i], 'understanding': peerUnderstanding[i].text.trim(),
       });
-      final study = await Api.create({'title': title.text.trim(), 'goal': goal.text.trim(), 'start_date': date,
+      final study = await Api.create({'title': title.text.trim(), 'goal': goal.text.trim().isEmpty ? title.text.trim() : goal.text.trim(), 'start_date': date,
         'weeks': weeks.text.trim(), 'hours_per_week': hours.text.trim(), 'member_count': members.text.trim(),
         'member_profiles': jsonEncode(profiles)}, pdf);
       if (mounted) Navigator.pop(context, study['id']);
@@ -281,18 +288,19 @@ class _CreatePageState extends State<CreatePage> {
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('어떤 걸 함께 공부할까요?', style: TextStyle(fontWeight: FontWeight.w700)),
           SizedBox(height: 4),
-          Text('주제와 목표를 적으면 AI 친구들이 기다리고 있을게요.',
+          Text('주제만 적으면 바로 채팅방으로 들어갈 수 있어요.',
             style: TextStyle(fontSize: 12, color: Color(0xFF536887))),
         ])),
       ])),
-      const SectionTitle('기본 정보'),
+      const SectionTitle('채팅방 주제'),
       TextFormField(controller: title, validator: requiredField,
         decoration: const InputDecoration(prefixIcon: Icon(Icons.bookmark_outline),
           labelText: '학습 주제', hintText: '예: 신경망 기초 공부')),
       const SizedBox(height: 12),
-      TextFormField(controller: goal, validator: requiredField,
+      ExpansionTile(title: const Text('목표·일정·AI 친구 설정 (선택)'), children: [
+      TextFormField(controller: goal,
         decoration: const InputDecoration(prefixIcon: Icon(Icons.flag_outlined),
-          labelText: '학습 목표', hintText: '예: 손실 함수와 학습 과정을 설명하기')),
+          labelText: '학습 목표 · 비워 두면 주제와 같게 설정', hintText: '예: 손실 함수와 학습 과정을 설명하기')),
       const SectionTitle('학습 일정'),
       TextFormField(controller: weeks, keyboardType: TextInputType.number,
         validator: (v) => numberField(v, 1, 26, '학습 주수'),
@@ -329,6 +337,7 @@ class _CreatePageState extends State<CreatePage> {
         title: Text('시작일  ${start.year}-${start.month}-${start.day}'), trailing: const Icon(Icons.chevron_right),
         onTap: () async { final d = await showDatePicker(context: context, initialDate: start,
           firstDate: DateTime(2020), lastDate: DateTime(2100)); if (d != null) setState(() => start = d); })),
+      ]),
       const SectionTitle('PDF 교안 · 선택사항'),
       Card(child: ListTile(title: Text(pdf?.name ?? '교안 없이 시작하기'),
         subtitle: Text(pdf == null ? '파일이 있다면 눌러서 추가하세요.' : '다른 PDF를 고르려면 눌러 주세요.'),
@@ -344,7 +353,7 @@ class _CreatePageState extends State<CreatePage> {
           style: TextStyle(color: Color(0xFF777777), fontSize: 12))),
       if (pdfError != null) Padding(padding: const EdgeInsets.fromLTRB(12, 4, 0, 0),
         child: Text(pdfError!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-      const SizedBox(height: 20), FilledButton(onPressed: busy ? null : submit, child: Text(busy ? '만드는 중...' : '스터디 만들기')),
+      const SizedBox(height: 20), FilledButton(onPressed: busy ? null : submit, child: Text(busy ? '만드는 중...' : '채팅방 만들고 시작하기')),
     ])));
 }
 
@@ -522,10 +531,8 @@ class _WeekPageState extends State<WeekPage> {
     finally { if (mounted) setState(() => busy = false); }
   }
   Future<void> start() async {
-    if ((!widget.hasPdf && note.text.trim().length < 10) ||
-        (note.text.trim().isNotEmpty && note.text.trim().length < 10)) {
-      errorMessage(context, widget.hasPdf ? '비워 두거나 10자 이상 적어 주세요.'
-        : '공부한 내용을 조금만 더 적어 주세요. 10자 이상이면 시작할 수 있어요.'); return;
+    if (note.text.trim().isNotEmpty && note.text.trim().length < 10) {
+      errorMessage(context, '비워 두거나 10자 이상 적어 주세요.'); return;
     }
     setState(() => busy = true);
     try {
@@ -580,9 +587,8 @@ class _WeekPageState extends State<WeekPage> {
           icon: const Icon(Icons.chat_bubble_outline), label: const Text('대화 이어하기')),
       ] else ...[
         SectionTitle(widget.week['status'] == 'complete' ? '다시 이야기해 볼까요?' : '공부한 걸 이야기해 주세요'),
-        SoftPanel(color: const Color(0xFFEAF3FF), child: Text(widget.hasPdf
-          ? '교안이 있으니 바로 질문을 받아도 돼요. 내가 이해한 내용을 적으면 그 내용도 함께 살펴볼게요.'
-          : '완벽하게 쓸 필요 없어요. 지금 이해한 만큼만 적으면 AI 친구들이 궁금한 걸 물어볼 거예요.')),
+        const SoftPanel(color: Color(0xFFEAF3FF), child: Text(
+          '바로 채팅을 시작해도 돼요. 적고 싶은 내용이 있다면 아래에 남겨 주세요.')),
         const Wrap(spacing: 6, runSpacing: 4, children: [
           Chip(label: Text('핵심 개념')),
           Chip(label: Text('작동 방식')),
@@ -590,9 +596,9 @@ class _WeekPageState extends State<WeekPage> {
           Chip(label: Text('헷갈리는 부분')),
         ]),
         const SizedBox(height: 8),
-        TextField(controller: note, maxLines: 8, maxLength: 12000, decoration: InputDecoration(
-          labelText: widget.hasPdf ? '내가 이해한 내용 · 선택사항' : '내가 이해한 내용',
-          hintText: widget.hasPdf ? '비워 두면 이번 주 교안을 보고 질문해요.' : '오늘 배운 걸 친구에게 설명하듯 적어 주세요.')),
+        TextField(controller: note, maxLines: 8, maxLength: 12000, decoration: const InputDecoration(
+          labelText: '내가 이해한 내용 · 선택사항',
+          hintText: '비워 두면 이번 주 목표와 교안을 바탕으로 질문해요.')),
         const SizedBox(height: 12), FilledButton.icon(onPressed: busy ? null : start,
           icon: const Icon(Icons.chat_bubble_outline), label: Text(busy ? '친구들 부르는 중...' : 'AI 친구들과 이야기하기')),
       ],
@@ -601,7 +607,10 @@ class _WeekPageState extends State<WeekPage> {
 
 class SessionPage extends StatefulWidget {
   final int id;
-  const SessionPage({super.key, required this.id});
+  final String? studyTitle;
+  final VoidCallback? onMenu;
+  final Future<void> Function()? onFinished;
+  const SessionPage({super.key, required this.id, this.studyTitle, this.onMenu, this.onFinished});
   @override State<SessionPage> createState() => _SessionPageState();
 }
 class _SessionPageState extends State<SessionPage> {
@@ -648,6 +657,17 @@ class _SessionPageState extends State<SessionPage> {
     final saved = await act('answer', {'text': answer.text.trim(), 'needs_review': needsReview});
     if (saved && mounted) await act('question');
   }
+  Future<void> togglePrevious(bool value) async {
+    final current = session!['week'] as Map<String, dynamic>;
+    try {
+      await Api.request('PUT', '/studies/${session!['study_id']}/weeks/${session!['week_no']}', {
+        'title': current['title'], 'scope': current['scope'],
+        'meeting_date': current['meeting_date'], 'status': current['status'],
+        'include_previous_questions': value,
+      });
+      await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
   Future<void> finish() async {
     final note = await showModalBottomSheet<String>(context: context, isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(builder: (sheetContext, setSheetState) => Padding(
@@ -656,21 +676,25 @@ class _SessionPageState extends State<SessionPage> {
           mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text('오늘 이야기, 다시 정리해 볼까요?', style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            const Text('처음에 쓴 내용과 달라진 생각이 있나요? 지금 이해한 걸 내 말로 적어 주세요.'),
+            const Text('남기고 싶은 생각이 있으면 적어 주세요. 비워 둬도 대화 기록은 저장돼요.'),
             const SizedBox(height: 16),
             TextField(controller: revised, autofocus: true, minLines: 3, maxLines: 6, maxLength: 12000,
               onChanged: (_) => setSheetState(() {}),
               decoration: const InputDecoration(hintText: '새로 알게 된 점이나 아직 헷갈리는 걸 적어 주세요.')),
             const SizedBox(height: 8),
-            FilledButton(onPressed: revised.text.trim().length < 10 ? null
-              : () => Navigator.pop(sheetContext, revised.text.trim()), child: const Text('오늘의 기록 저장하기')),
+            FilledButton(onPressed: () => Navigator.pop(sheetContext, revised.text.trim()),
+              child: const Text('대화 마치고 기록 저장하기')),
           ])))));
-    if (note != null && mounted) await act('finish', {'revised_note': note});
+    if (note != null && mounted) {
+      final saved = await act('finish', {'revised_note': note});
+      if (saved && widget.onFinished != null) await widget.onFinished!();
+    }
   }
   @override Widget build(BuildContext context) {
     final s = session;
     final messages = (s?['messages'] as List?) ?? [];
     final members = (s?['members'] as List?) ?? [];
+    final currentWeek = s?['week'] as Map<String, dynamic>?;
     final awaiting = messages.isNotEmpty &&
       (messages.last['role'] == 'assistant' || messages.last['role'] == 'assistant_hint');
     final finished = s != null && s['status'] != 'active';
@@ -679,8 +703,11 @@ class _SessionPageState extends State<SessionPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFF),
       appBar: AppBar(backgroundColor: const Color(0xFFF8FAFF),
+        leading: widget.onMenu == null ? null : IconButton(
+          tooltip: '채팅방 목록', icon: const Icon(Icons.menu), onPressed: widget.onMenu),
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${s?['week_no'] ?? ''}주차 스터디방', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          Text(widget.studyTitle ?? '${s?['week_no'] ?? ''}주차 스터디방',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           Text(finished ? '오늘의 이야기를 마쳤어요' : 'AI 친구들이 함께 있어요',
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400)),
         ])),
@@ -688,6 +715,21 @@ class _SessionPageState extends State<SessionPage> {
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: Column(children: [
           Expanded(child: ListView(controller: scrollController,
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 28), children: [
+            if (currentWeek != null) SoftPanel(color: const Color(0xFFEAF3FF), child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${s['week_no']}주차 · ${currentWeek['title']}',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 5), Text('${currentWeek['scope']}'),
+                if ((currentWeek['review'] as List).isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text('다시 볼 내용 · ${(currentWeek['review'] as List).join(', ')}'),
+                ],
+                if (s['week_no'] > 1 && !finished) SwitchListTile(
+                  contentPadding: EdgeInsets.zero, dense: true,
+                  title: const Text('지난 주차 내용도 질문받기'),
+                  value: currentWeek['include_previous_questions'] != 0,
+                  onChanged: busy ? null : togglePrevious),
+              ])),
             if (members.isNotEmpty) ...[
               const Text('함께 공부하는 AI 친구들', style: TextStyle(fontWeight: FontWeight.w700)),
               const SizedBox(height: 10),
@@ -708,11 +750,11 @@ class _SessionPageState extends State<SessionPage> {
               const SizedBox(height: 18),
             ],
             Center(child: Padding(padding: const EdgeInsets.only(bottom: 16),
-              child: Text('내가 적은 내용부터 함께 이야기해요',
+              child: Text('이번 주 내용, 편하게 이야기해요',
                 style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)))),
             if ((s['initial_note'] as String).isEmpty)
               const Center(child: Padding(padding: EdgeInsets.only(bottom: 12),
-                child: Text('이번 주 교안을 바탕으로 질문을 시작해요.')))
+                child: Text('이번 주 목표와 교안을 바탕으로 질문을 시작해요.')))
             else ChatBubble(name: '나 · 처음 생각', text: s['initial_note'], mine: true),
             ...messages.map((m) => ChatBubble(
               name: m['role'] == 'assistant_hint' ? '${peerLabel(m['member_no'] as int)} · 힌트'
@@ -729,7 +771,8 @@ class _SessionPageState extends State<SessionPage> {
                 child: Text(busyAction == 'question' ? 'AI 친구가 생각하고 있어요...' : 'AI 친구가 답을 읽고 있어요...',
                   style: const TextStyle(color: Color(0xFF536887), fontSize: 12))),
             if (finished) ...[
-              ChatBubble(name: '나 · 다시 정리한 생각', text: s['revised_note'], mine: true),
+              if ((s['revised_note'] as String).isNotEmpty)
+                ChatBubble(name: '나 · 다시 정리한 생각', text: s['revised_note'], mine: true),
               const SizedBox(height: 14),
               Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [

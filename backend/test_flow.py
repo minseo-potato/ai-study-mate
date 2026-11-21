@@ -55,6 +55,26 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_pinned_room_opens_first_and_empty_notes_can_finish(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+            client = TestClient(app)
+            ids = []
+            for title in ("첫 방", "두 번째 방"):
+                response = client.post("/studies", data={"title": title, "goal": title,
+                    "start_date": "2026-11-21", "weeks": "2", "hours_per_week": "3"})
+                ids.append(response.json()["id"])
+            self.assertEqual(client.put(f"/studies/{ids[0]}/pin").status_code, 200)
+            self.assertEqual(client.get("/studies").json()[0]["id"], ids[0])
+            session = client.post(f"/studies/{ids[0]}/weeks/1/sessions", json={"text": ""})
+            self.assertEqual(session.status_code, 200, session.text)
+            session_id = session.json()["session_id"]
+            self.assertEqual(client.get(f"/sessions/{session_id}").json()["week"]["week_no"], 1)
+            done = client.post(f"/sessions/{session_id}/finish", json={"revised_note": ""})
+            self.assertEqual(done.status_code, 200, done.text)
+            self.assertEqual(done.json()["status"], "finished")
+            self.assertEqual(client.get(f"/studies/{ids[0]}").json()["weeks"][0]["status"], "complete")
+
     def test_api_credit_error_is_actionable(self):
         client_class = httpx.AsyncClient
         def no_credits(request):
@@ -172,14 +192,12 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(created.status_code, 200, created.text)
             study = created.json()
             self.assertEqual(study["pdf_name"], "")
-            self.assertEqual(client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""}).status_code, 400)
+            session = client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""})
+            self.assertEqual(session.status_code, 200, session.text)
             self.assertEqual(study["weeks"][0]["title"], "핵심 개념 찾기")
             self.assertIn("핵심 용어", study["weeks"][0]["scope"])
             self.assertNotEqual(study["members"][0]["understanding"], study["members"][1]["understanding"])
             self.assertEqual(study["members"][1]["level"], "심화")
-            session = client.post(f"/studies/{study['id']}/weeks/1/sessions",
-                json={"text": "정렬 알고리즘의 비교 방식과 시간 복잡도를 설명합니다."})
-            self.assertEqual(session.status_code, 200, session.text)
             question = client.post(f"/sessions/{session.json()['session_id']}/question")
             self.assertEqual(question.status_code, 200, question.text)
             self.assertIsNone(question.json()["messages"][0]["page_no"])

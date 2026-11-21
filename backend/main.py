@@ -58,7 +58,16 @@ def health():
 @app.get("/studies")
 def list_studies():
     with connect() as db:
-        return [dict(r) for r in db.execute("SELECT * FROM studies ORDER BY id DESC")]
+        return [dict(r) for r in db.execute("SELECT * FROM studies ORDER BY pinned DESC,id DESC")]
+
+
+@app.put("/studies/{study_id}/pin")
+def pin_study(study_id: int):
+    with connect() as db:
+        required(db, "SELECT id FROM studies WHERE id=?", (study_id,))
+        db.execute("UPDATE studies SET pinned=0")
+        db.execute("UPDATE studies SET pinned=1 WHERE id=?", (study_id,))
+        return study_data(db, study_id)
 
 
 @app.post("/studies")
@@ -220,9 +229,8 @@ def start_session(study_id: int, week_no: int, body: Note):
     with connect() as db:
         required(db, "SELECT 1 FROM weeks WHERE study_id=? AND week_no=?", (study_id, week_no))
         note = body.text.strip()
-        has_pdf = db.execute("SELECT 1 FROM pages WHERE study_id=? LIMIT 1", (study_id,)).fetchone() is not None
-        if (not note and not has_pdf) or (note and len(note) < 10):
-            raise HTTPException(400, "교안이 없다면 공부한 내용을 10자 이상 적어 주세요.")
+        if note and len(note) < 10:
+            raise HTTPException(400, "학습 정리를 적는다면 10자 이상 적어 주세요.")
         active = db.execute("SELECT id FROM sessions WHERE study_id=? AND week_no=? AND status='active'", (study_id, week_no)).fetchone()
         if active:
             raise HTTPException(409, f"진행 중인 세션이 있습니다: {active['id']}")
@@ -234,6 +242,9 @@ def start_session(study_id: int, week_no: int, body: Note):
 
 def session_data(db, session_id):
     session = obj(required(db, "SELECT * FROM sessions WHERE id=?", (session_id,)))
+    session["week"] = obj(required(db, "SELECT * FROM weeks WHERE study_id=? AND week_no=?",
+                                   (session["study_id"], session["week_no"])))
+    session["week"]["review"] = loads(session["week"]["review"])
     session["unanswered"] = loads(session["unanswered"])
     session["messages"] = [dict(r) for r in db.execute(
         "SELECT * FROM messages WHERE session_id=? ORDER BY id", (session_id,))]
@@ -455,7 +466,7 @@ async def answer(session_id: int, body: Answer):
 
 
 class Finish(BaseModel):
-    revised_note: str = Field(min_length=10, max_length=12000)
+    revised_note: str = Field(default="", max_length=12000)
 
 
 @app.post("/sessions/{session_id}/finish")
@@ -466,7 +477,9 @@ async def finish(session_id: int, body: Finish):
             raise HTTPException(409, "이미 종료된 세션입니다.")
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
-        pages = source_pages(db, session["study_id"], week["scope"], body.revised_note,
+        last_user_note = next((m["body"] for m in reversed(session["messages"]) if m["role"] == "user"), "")
+        learned_source = body.revised_note.strip() or last_user_note or session["initial_note"] or study["goal"]
+        pages = source_pages(db, session["study_id"], week["scope"], learned_source,
                              session["week_no"], len(study["weeks"]))
         pending = list(session["unanswered"])
         if session["messages"] and session["messages"][-1]["role"] in ("assistant", "assistant_hint"):
@@ -489,7 +502,7 @@ async def finish(session_id: int, body: Finish):
         db.execute("UPDATE sessions SET revised_note=?,unanswered=?,minutes=?,status='finished' WHERE id=?",
                    (body.revised_note, dumps(checks), dumps(minutes), session_id))
         for member in study["members"]:
-            learned = f"{member['understanding']} | {session['week_no']}주차 학습: {body.revised_note.strip()}"
+            learned = f"{member['understanding']} | {session['week_no']}주차 학습: {learned_source}"
             db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
                        (learned[-500:], session["study_id"], member["member_no"]))
         db.execute("UPDATE weeks SET status='complete',progress_percent=100,remaining_scope='' WHERE study_id=? AND week_no=?",
