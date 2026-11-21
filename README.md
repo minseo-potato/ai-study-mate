@@ -13,9 +13,9 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-실제 AI를 쓰려면 OpenAI Platform에서 프로젝트 API 키를 발급한 뒤 `backend/.env.example`을 `backend/.env`로 복사하고 `OPENAI_API_KEY=` 뒤에 키를 넣으세요. `DEMO_MODE=1`이 설정되어 있다면 해제하고 서버를 재시작하세요. `/health`의 `ai_ready`가 `true`이면 키가 설정된 상태입니다. 이 상태만으로 API 호출 성공이나 결제 설정을 보증하지는 않습니다. `backend/.env`는 Git에서 제외됩니다.
+현재 단계에서는 API 키가 필요 없습니다. 서버는 설정 없이 체험 모드로 시작합니다. 질문·계획·회의록은 규칙 기반 예시이므로 교안 내용을 실제 AI처럼 판단하지는 못합니다.
 
-API 키 없이 화면 흐름을 시연하려면 서버 실행 전에 `$env:DEMO_MODE="1"`을 설정하세요. 이 모드의 계획·질문·요약은 규칙 기반 예시이며 생성형 AI 결과가 아닙니다. 체험 모드에서 `ai_ready`는 `false`입니다.
+나중에 실제 AI를 연결할 때만 OpenAI Platform에서 프로젝트 API 키를 발급하고 `backend/.env.example`을 `backend/.env`로 복사해 키를 넣으세요. 그때 `DEMO_MODE=0`을 명시하고 서버를 재시작해야 실제 API를 호출합니다. `/health`의 `ai_ready`는 키 설정 상태만 나타내며 호출 성공이나 결제 설정을 보증하지 않습니다. `backend/.env`는 Git에서 제외됩니다.
 
 다른 터미널에서:
 

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai import generate_json
+from ai import demo_mode, generate_json
 from db import connect, dumps, loads, obj
 
 app = FastAPI(title="AI 스터디메이트")
@@ -51,8 +51,8 @@ def study_data(db, study_id):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "demo_mode": os.getenv("DEMO_MODE") == "1",
-            "ai_ready": bool(os.getenv("OPENAI_API_KEY")) and os.getenv("DEMO_MODE") != "1"}
+    return {"ok": True, "demo_mode": demo_mode(),
+            "ai_ready": bool(os.getenv("OPENAI_API_KEY")) and not demo_mode()}
 
 
 @app.get("/studies")

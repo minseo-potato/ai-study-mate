@@ -12,7 +12,7 @@ from fastapi import HTTPException
 import httpx
 from reportlab.pdfgen import canvas
 
-from ai import demo_response, generate_json
+from ai import demo_mode, demo_response, generate_json
 from main import app
 
 
@@ -55,6 +55,15 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_offline_mode_is_default_and_live_requires_opt_in(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            os.environ.pop("DEMO_MODE", None)
+            self.assertTrue(demo_mode())
+            self.assertTrue(TestClient(app).get("/health").json()["demo_mode"])
+        with patch.dict(os.environ, {"DEMO_MODE": "0", "OPENAI_API_KEY": ""}):
+            self.assertFalse(demo_mode())
+            self.assertFalse(TestClient(app).get("/health").json()["ai_ready"])
+
     def test_pinned_room_opens_first_and_empty_notes_can_finish(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):

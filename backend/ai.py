@@ -9,9 +9,14 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=False)
 
 
+def demo_mode() -> bool:
+    """Use the offline experience unless live API use is explicitly enabled."""
+    return os.getenv("DEMO_MODE", "1") != "0"
+
+
 async def generate_json(instructions: str, payload: dict) -> dict:
     key = os.getenv("OPENAI_API_KEY")
-    if os.getenv("DEMO_MODE") == "1":
+    if demo_mode():
         return demo_response(instructions, payload)
     if not key:
         raise HTTPException(503, "서버의 OPENAI_API_KEY가 설정되지 않았습니다.")
