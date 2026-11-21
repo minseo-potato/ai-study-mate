@@ -495,6 +495,14 @@ class _StudyPageState extends State<StudyPage> {
           LinearProgressIndicator(value: completed / weeks.length, minHeight: 8,
             borderRadius: BorderRadius.circular(8), backgroundColor: const Color(0xFFD9E5F7)),
         ])),
+        Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+          leading: const CircleAvatar(backgroundColor: Color(0xFFE9F6EF),
+            child: Icon(Icons.insights_rounded, color: Color(0xFF27875D))),
+          title: const Text('학습 성장 기록', style: TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: const Text('처음과 나중의 설명을 비교하고 복습할 내용을 확인해요.'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => LearningJourneyPage(studyId: widget.id))).then((_) => refresh()))),
         const SectionTitle('주간 학습'),
         SizedBox(height: 64, child: ListView(scrollDirection: Axis.horizontal, children: weeks.map((w) {
           final selected = w['week_no'] == selectedWeek;
@@ -564,6 +572,110 @@ class _StudyPageState extends State<StudyPage> {
           subtitle: Text('${m['minutes']['summary']}', maxLines: 2, overflow: TextOverflow.ellipsis),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SessionPage(id: m['session_id'])))))),
+      ]));
+  }
+}
+
+class LearningJourneyPage extends StatefulWidget {
+  final int studyId;
+  const LearningJourneyPage({super.key, required this.studyId});
+  @override State<LearningJourneyPage> createState() => _LearningJourneyPageState();
+}
+class _LearningJourneyPageState extends State<LearningJourneyPage> {
+  Map<String, dynamic>? report;
+  List<dynamic> reviews = [];
+  bool busy = false;
+  @override void initState() { super.initState(); refresh(); }
+  Future<void> refresh() async {
+    try {
+      final results = await Future.wait([
+        Api.request('GET', '/studies/${widget.studyId}/learning-report'),
+        Api.request('GET', '/studies/${widget.studyId}/reviews'),
+      ]);
+      if (mounted) setState(() { report = results[0] as Map<String, dynamic>; reviews = results[1] as List<dynamic>; });
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  Future<void> setResolved(dynamic item, bool resolved) async {
+    setState(() => busy = true);
+    try {
+      await Api.request('PUT', '/studies/${widget.studyId}/reviews/${item['id']}', {'resolved': resolved});
+      await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+    finally { if (mounted) setState(() => busy = false); }
+  }
+  Widget stat(int value, String label, IconData icon) => Expanded(child: SoftPanel(
+    child: Column(children: [Icon(icon, color: const Color(0xFF3F7FF3), size: 20),
+      const SizedBox(height: 6), Text('$value', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF536887))),
+    ])));
+  Widget noteBlock(String label, String value, Color color) => Container(
+    width: double.infinity, padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(14)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 7), Text(value.trim().isEmpty ? '작성한 내용이 없어요.' : value,
+        style: const TextStyle(height: 1.5)),
+    ]));
+  @override Widget build(BuildContext context) {
+    final data = report;
+    final open = reviews.where((r) => r['status'] == 'open').toList();
+    final done = reviews.where((r) => r['status'] == 'done').toList();
+    final weeks = (data?['weeks'] as List?) ?? [];
+    return Scaffold(appBar: AppBar(title: const Text('학습 성장 기록')),
+      body: data == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
+        SoftPanel(color: const Color(0xFFEAF3FF), child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${data['title']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 5), Text('${data['goal']}'),
+          const SizedBox(height: 12), const Text('내가 남긴 설명과 대화 기록을 그대로 보여줘요. 숫자는 학습 활동 횟수예요.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF536887))),
+        ])),
+        Row(children: [
+          stat(data['completed_weeks'] as int, '완료한 주차', Icons.calendar_today_outlined),
+          stat(data['answer_count'] as int, '답한 횟수', Icons.chat_bubble_outline),
+          stat(data['open_reviews'] as int, '남은 복습', Icons.bookmark_outline),
+        ]),
+        SectionTitle('다시 볼 내용', detail: '${open.length}개 남음'),
+        if (open.isEmpty) const SoftPanel(child: Text('지금 남아 있는 복습 항목이 없어요.')),
+        ...open.map((item) => Card(child: CheckboxListTile(
+          value: false, onChanged: busy ? null : (_) => setResolved(item, true),
+          title: Text('${item['question']}'),
+          subtitle: Text('${item['source_week']}주차에서 남긴 내용 · 공부했다면 체크하세요'),
+          controlAffinity: ListTileControlAffinity.leading))),
+        if (done.isNotEmpty) ExpansionTile(title: Text('완료한 복습 ${done.length}개'),
+          children: done.map((item) => CheckboxListTile(
+            value: true, onChanged: busy ? null : (_) => setResolved(item, false),
+            title: Text('${item['question']}'),
+            subtitle: const Text('다시 공부할 내용이면 체크를 해제하세요'),
+            controlAffinity: ListTileControlAffinity.leading)).toList()),
+        const SectionTitle('주차별 설명의 변화'),
+        if (weeks.every((w) => w['status'] != 'complete'))
+          const SoftPanel(child: Text('첫 대화를 마치면 처음과 나중의 설명을 여기에서 비교할 수 있어요.')),
+        ...weeks.where((w) => w['status'] == 'complete').map((week) => Card(
+          child: Padding(padding: const EdgeInsets.all(18), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${week['week_no']}주차 · ${week['title']}',
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 5),
+            Text('질문 ${week['question_count']}개 · 답변 ${week['answer_count']}개',
+              style: const TextStyle(color: Color(0xFF536887), fontSize: 12)),
+            const SizedBox(height: 14),
+            LayoutBuilder(builder: (context, constraints) => constraints.maxWidth >= 460
+              ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(child: noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF1F4FA))),
+                  const SizedBox(width: 10),
+                  Expanded(child: noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEAF6F0))),
+                ])
+              : Column(children: [
+                  noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF1F4FA)),
+                  const SizedBox(height: 10),
+                  noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEAF6F0)),
+                ])),
+            if ('${week['summary']}'.isNotEmpty) ...[
+              const SizedBox(height: 14), Text('스터디 기록 · ${week['summary']}',
+                style: const TextStyle(height: 1.5)),
+            ],
+          ])))),
       ]));
   }
 }
@@ -810,6 +922,12 @@ class _SessionPageState extends State<SessionPage> {
             ])))));
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
+  Future<void> showLearningJourney() async {
+    if (session == null) return;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) =>
+      LearningJourneyPage(studyId: session!['study_id'] as int)));
+    if (mounted) await refresh();
+  }
   Future<void> togglePrevious(bool value) async {
     final current = session!['week'] as Map<String, dynamic>;
     try {
@@ -885,6 +1003,11 @@ class _SessionPageState extends State<SessionPage> {
                   const SizedBox(height: 8),
                   Text('다시 볼 내용 · ${(currentWeek['review'] as List).join(', ')}'),
                 ],
+                const SizedBox(height: 8),
+                Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+                  onPressed: showLearningJourney,
+                  icon: const Icon(Icons.insights_outlined, size: 18),
+                  label: const Text('학습 변화와 복습 보기'))),
                 if (s['week_no'] > 1 && !finished) SwitchListTile(
                   contentPadding: EdgeInsets.zero, dense: true,
                   title: const Text('지난 주차 내용도 질문받기'),

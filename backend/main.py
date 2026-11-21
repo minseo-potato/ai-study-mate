@@ -4,7 +4,7 @@ import json
 import math
 import os
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -359,6 +359,7 @@ async def next_question(session_id: int):
         study = study_data(db, session["study_id"])
         member = study["members"][(session["next_member"] - 1) % len(study["members"])]
         week = study["weeks"][session["week_no"] - 1]
+        question_week = {**week, "review": week["review"] if week["include_previous_questions"] else []}
         pages = source_pages(db, session["study_id"], week["scope"],
                              session["initial_note"] or study["goal"], session["week_no"], len(study["weeks"]))
         previous_context, previous_pages = [], []
@@ -386,7 +387,7 @@ async def next_question(session_id: int):
         "include_previous_questions가 참이면 이전 주차의 기록과 교안도 질문할 수 있습니다. 거짓이면 이번 주차 범위만 질문하세요. "
         "거짓이어도 동료들의 누적 understanding을 지우거나 되돌리지 마세요. 기존 질문을 반복하지 말고 바로 정답을 알려주지 마세요. "
         "교안 근거가 있다면 page_no에 제공된 쪽수 하나를 쓰고, understanding에는 질문자가 이번 대화에서 이해한 내용을 짧게 적으세요.",
-        {"study_goal": study["goal"], "week": week, "member": member,
+        {"study_goal": study["goal"], "week": question_week, "member": member,
          "members": study["members"], "suggested_member_no": member["member_no"],
          "initial_note": session["initial_note"], "messages": session["messages"][-12:],
          "question_count": sum(m["role"] == "assistant" for m in session["messages"]),
@@ -404,7 +405,7 @@ async def next_question(session_id: int):
             "앞선 질문과 겹쳤습니다. 아래 질문과 다른 새 질문 한 개를 만드세요. "
             "JSON 키는 speaker_no,comment,comment_member_no,question,page_no,understanding입니다. "
             "이번 주 범위와 교안에 근거하고, 답변의 맥락을 이어 가세요.",
-            {"study_goal": study["goal"], "week": week, "member": member,
+            {"study_goal": study["goal"], "week": question_week, "member": member,
              "members": study["members"], "messages": session["messages"][-12:],
              "question_count": sum(m["role"] == "assistant" for m in session["messages"]),
              "asked_questions": list(prior_questions), "source_pages": pages + previous_pages,
@@ -569,7 +570,8 @@ async def finish(session_id: int, body: Finish):
     checks = summary.get("next_checks", [])
     if not isinstance(checks, list):
         checks = []
-    checks = list(dict.fromkeys(pending + [str(x) for x in checks]))[:20]
+    checks = list(dict.fromkeys(str(x).strip()[:500] for x in pending + checks
+                                    if str(x).strip()))[:20]
     minutes = {"summary": str(summary.get("summary", "")), "source_pages": [p["page_no"] for p in pages],
                "initial_note": session["initial_note"], "revised_note": body.revised_note,
                "messages": session["messages"], "next_checks": checks}
@@ -577,6 +579,11 @@ async def finish(session_id: int, body: Finish):
         required(db, "SELECT id FROM sessions WHERE id=? AND status='active'", (session_id,))
         db.execute("UPDATE sessions SET revised_note=?,unanswered=?,minutes=?,status='finished' WHERE id=?",
                    (body.revised_note, dumps(checks), dumps(minutes), session_id))
+        for question in checks:
+            db.execute("INSERT INTO review_items(study_id,question,source_week) VALUES(?,?,?) "
+                       "ON CONFLICT(study_id,question) DO UPDATE SET source_week=excluded.source_week,"
+                       "status='open',resolved_at=NULL",
+                       (session["study_id"], question, session["week_no"]))
         for member in study["members"]:
             learned = f"{member['understanding']} | {session['week_no']}주차 학습: {learned_source}"
             db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
@@ -599,3 +606,89 @@ def list_minutes(study_id: int):
         required(db, "SELECT 1 FROM studies WHERE id=?", (study_id,))
         return [{"week_no": r["week_no"], "session_id": r["id"], "minutes": json.loads(r["minutes"])}
                 for r in db.execute("SELECT * FROM sessions WHERE study_id=? AND status='finished' ORDER BY week_no,id", (study_id,))]
+
+
+@app.get("/studies/{study_id}/reviews")
+def list_reviews(study_id: int):
+    with connect() as db:
+        required(db, "SELECT 1 FROM studies WHERE id=?", (study_id,))
+        return [dict(row) for row in db.execute(
+            "SELECT * FROM review_items WHERE study_id=? ORDER BY status='open' DESC,source_week,id",
+            (study_id,))]
+
+
+class ReviewEdit(BaseModel):
+    resolved: bool
+
+
+@app.put("/studies/{study_id}/reviews/{review_id}")
+def edit_review(study_id: int, review_id: int, body: ReviewEdit):
+    with connect() as db:
+        item = required(db, "SELECT * FROM review_items WHERE id=? AND study_id=?", (review_id, study_id))
+        if body.resolved:
+            db.execute("UPDATE review_items SET status='done',resolved_at=? WHERE id=?",
+                       (datetime.now(timezone.utc).isoformat(), review_id))
+        else:
+            db.execute("UPDATE review_items SET status='open',resolved_at=NULL WHERE id=?", (review_id,))
+        weeks = list(db.execute("SELECT week_no,review FROM weeks WHERE study_id=? AND status!='complete' ORDER BY week_no",
+                                (study_id,)))
+        for index, week in enumerate(weeks):
+            reviews = [q for q in loads(week["review"]) if q != item["question"]]
+            if not body.resolved and index == 0:
+                reviews.append(item["question"])
+            db.execute("UPDATE weeks SET review=? WHERE study_id=? AND week_no=?",
+                       (dumps(reviews), study_id, week["week_no"]))
+        return dict(required(db, "SELECT * FROM review_items WHERE id=?", (review_id,)))
+
+
+@app.get("/studies/{study_id}/learning-report")
+def learning_report(study_id: int):
+    with connect() as db:
+        study = study_data(db, study_id)
+        sessions = [dict(row) for row in db.execute(
+            "SELECT * FROM sessions WHERE study_id=? AND status='finished' ORDER BY week_no,id", (study_id,))]
+        all_reviews = [dict(row) for row in db.execute(
+            "SELECT source_week,status FROM review_items WHERE study_id=?", (study_id,))]
+        report_weeks = []
+        total_questions = total_answers = 0
+        for week in study["weeks"]:
+            finished = [s for s in sessions if s["week_no"] == week["week_no"]]
+            question_count = answer_count = 0
+            for session in finished:
+                counts = db.execute(
+                    "SELECT role,COUNT(*) AS count FROM messages WHERE session_id=? "
+                    "AND role IN ('assistant','user') GROUP BY role", (session["id"],))
+                for row in counts:
+                    if row["role"] == "assistant":
+                        question_count += row["count"]
+                    else:
+                        answer_count += row["count"]
+            total_questions += question_count
+            total_answers += answer_count
+            latest = finished[-1] if finished else None
+            minutes = json.loads(latest["minutes"]) if latest and latest["minutes"] else {}
+            first_answer = db.execute(
+                "SELECT body FROM messages WHERE session_id=? AND role='user' ORDER BY id LIMIT 1",
+                (latest["id"],)).fetchone() if latest else None
+            baseline = (latest["initial_note"] if latest else "") or (first_answer["body"] if first_answer else "")
+            report_weeks.append({
+                "week_no": week["week_no"], "title": week["title"], "status": week["status"],
+                "initial_note": latest["initial_note"] if latest else "",
+                "baseline_text": baseline,
+                "baseline_label": "대화 전 내 생각" if latest and latest["initial_note"] else "처음 남긴 답변",
+                "revised_note": latest["revised_note"] if latest else "",
+                "summary": minutes.get("summary", ""),
+                "question_count": question_count, "answer_count": answer_count,
+                "source_pages": minutes.get("source_pages", []),
+                "open_reviews": sum(r["status"] == "open" and r["source_week"] == week["week_no"]
+                                    for r in all_reviews),
+            })
+        return {
+            "title": study["title"], "goal": study["goal"],
+            "total_weeks": len(study["weeks"]),
+            "completed_weeks": sum(w["status"] == "complete" for w in study["weeks"]),
+            "question_count": total_questions, "answer_count": total_answers,
+            "open_reviews": sum(r["status"] == "open" for r in all_reviews),
+            "resolved_reviews": sum(r["status"] == "done" for r in all_reviews),
+            "weeks": report_weeks,
+        }

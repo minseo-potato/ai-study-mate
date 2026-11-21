@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS messages (
  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, role TEXT NOT NULL,
  member_no INTEGER, body TEXT NOT NULL, page_no INTEGER, pdf_version INTEGER
 );
+CREATE TABLE IF NOT EXISTS review_items (
+ id INTEGER PRIMARY KEY, study_id INTEGER NOT NULL, question TEXT NOT NULL,
+ source_week INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+ resolved_at TEXT, UNIQUE(study_id,question)
+);
+CREATE INDEX IF NOT EXISTS review_items_study_status ON review_items(study_id,status);
 """
 
 
@@ -69,6 +75,12 @@ def connect():
         db.execute("ALTER TABLE weeks ADD COLUMN remaining_scope TEXT NOT NULL DEFAULT ''")
     if "include_previous_questions" not in week_columns:
         db.execute("ALTER TABLE weeks ADD COLUMN include_previous_questions INTEGER NOT NULL DEFAULT 1")
+    if db.execute("SELECT COUNT(*) FROM review_items").fetchone()[0] == 0:
+        for session in db.execute("SELECT study_id,week_no,unanswered FROM sessions WHERE status='finished'"):
+            for question in loads(session["unanswered"]):
+                if isinstance(question, str) and question.strip():
+                    db.execute("INSERT OR IGNORE INTO review_items(study_id,question,source_week) VALUES(?,?,?)",
+                               (session["study_id"], question.strip(), session["week_no"]))
     try:
         yield db
         db.commit()

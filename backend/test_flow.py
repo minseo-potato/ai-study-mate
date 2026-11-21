@@ -13,6 +13,7 @@ import httpx
 from reportlab.pdfgen import canvas
 
 from ai import demo_mode, demo_response, generate_json
+from db import connect
 from main import app
 
 
@@ -65,6 +66,45 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_review_queue_and_learning_report_follow_real_study_records(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+            client = TestClient(app)
+            study = client.post("/studies", data={"title": "신경망", "goal": "훈련과 검증 이해",
+                "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"}).json()
+            study_id = study["id"]
+            session_id = client.post(f"/studies/{study_id}/weeks/1/sessions",
+                json={"text": "훈련 데이터와 검증 데이터를 구분해 보겠습니다."}).json()["session_id"]
+            client.post(f"/sessions/{session_id}/question")
+            client.post(f"/sessions/{session_id}/answer",
+                        json={"text": "검증 데이터는 일반화를 확인합니다.", "needs_review": True})
+            done = client.post(f"/sessions/{session_id}/finish",
+                               json={"revised_note": "훈련으로 가중치를 바꾸고 검증으로 일반화를 살핍니다."})
+            self.assertEqual(done.status_code, 200, done.text)
+            reviews = client.get(f"/studies/{study_id}/reviews").json()
+            self.assertEqual(len(reviews), 2)
+            self.assertTrue(all(item["status"] == "open" for item in reviews))
+            report = client.get(f"/studies/{study_id}/learning-report").json()
+            self.assertEqual((report["completed_weeks"], report["question_count"], report["answer_count"]), (1, 1, 1))
+            self.assertEqual(report["open_reviews"], 2)
+            self.assertEqual(report["weeks"][0]["initial_note"], "훈련 데이터와 검증 데이터를 구분해 보겠습니다.")
+            self.assertEqual(report["weeks"][0]["baseline_label"], "대화 전 내 생각")
+            self.assertIn("일반화", report["weeks"][0]["revised_note"])
+            first = reviews[0]
+            resolved = client.put(f"/studies/{study_id}/reviews/{first['id']}", json={"resolved": True})
+            self.assertEqual(resolved.json()["status"], "done")
+            week2 = client.get(f"/studies/{study_id}").json()["weeks"][1]
+            self.assertNotIn(first["question"], week2["review"])
+            self.assertEqual(client.get(f"/studies/{study_id}/learning-report").json()["resolved_reviews"], 1)
+            reopened = client.put(f"/studies/{study_id}/reviews/{first['id']}", json={"resolved": False})
+            self.assertEqual(reopened.json()["status"], "open")
+            self.assertIn(first["question"], client.get(f"/studies/{study_id}").json()["weeks"][1]["review"])
+            self.assertEqual(client.put(f"/studies/{study_id}/reviews/999999", json={"resolved": True}).status_code, 404)
+            with connect() as db:
+                db.execute("DELETE FROM review_items")
+            migrated = client.get(f"/studies/{study_id}/reviews").json()
+            self.assertEqual(len(migrated), 2)
+
     def test_room_management_and_later_pdf_keep_old_sources(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
@@ -124,6 +164,8 @@ class FlowTest(unittest.TestCase):
             done = client.post(f"/sessions/{session_id}/finish", json={"revised_note": ""})
             self.assertEqual(done.status_code, 200, done.text)
             self.assertEqual(done.json()["status"], "finished")
+            report = client.get(f"/studies/{ids[0]}/learning-report").json()
+            self.assertEqual(report["weeks"][0]["baseline_text"], "")
             self.assertEqual(client.get(f"/studies/{ids[0]}").json()["weeks"][0]["status"], "complete")
 
     def test_api_credit_error_is_actionable(self):
@@ -343,6 +385,9 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(captured[-1]["current_source_pages"][0]["page_no"], 1)
             client.post(f"/sessions/{first_id}/answer", json={"text": "훈련 내용을 이해했습니다."})
             self.assertEqual(client.post(f"/sessions/{first_id}/finish", json={"revised_note": "훈련과 검증의 차이를 다시 정리했습니다."}).status_code, 200)
+            first_report = client.get(f"/studies/{study['id']}/learning-report").json()
+            self.assertEqual(first_report["weeks"][0]["baseline_label"], "처음 남긴 답변")
+            self.assertEqual(first_report["weeks"][0]["baseline_text"], "훈련 내용을 이해했습니다.")
             week2 = study["weeks"][1]
             changed = client.put(f"/studies/{study['id']}/weeks/2", json={
                 "title": week2["title"], "scope": week2["scope"], "meeting_date": week2["meeting_date"],
@@ -354,6 +399,7 @@ class FlowTest(unittest.TestCase):
             question = client.post(f"/sessions/{second_id}/question")
             self.assertEqual(question.json()["messages"][0]["page_no"], 2)
             self.assertFalse(captured[-1]["include_previous_questions"])
+            self.assertEqual(captured[-1]["week"]["review"], [])
             self.assertEqual(captured[-1]["previous_source_pages"], [])
             self.assertEqual(captured[-1]["previous_study"], [])
             self.assertEqual(captured[-1]["current_source_pages"][0]["page_no"], 2)
@@ -366,6 +412,7 @@ class FlowTest(unittest.TestCase):
             question = client.post(f"/sessions/{second_id}/question")
             self.assertEqual(question.status_code, 200, question.text)
             self.assertTrue(captured[-1]["include_previous_questions"])
+            self.assertTrue(captured[-1]["week"]["review"])
             self.assertEqual(captured[-1]["previous_source_pages"][0]["page_no"], 1)
             self.assertEqual(captured[-1]["previous_study"][0]["week_no"], 1)
 
