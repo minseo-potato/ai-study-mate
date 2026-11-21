@@ -58,15 +58,75 @@ def health():
 @app.get("/studies")
 def list_studies():
     with connect() as db:
-        return [dict(r) for r in db.execute("SELECT * FROM studies ORDER BY pinned DESC,id DESC")]
+        return [dict(r) for r in db.execute("SELECT * FROM studies ORDER BY archived ASC,pinned DESC,id DESC")]
 
 
 @app.put("/studies/{study_id}/pin")
 def pin_study(study_id: int):
     with connect() as db:
-        required(db, "SELECT id FROM studies WHERE id=?", (study_id,))
+        required(db, "SELECT id FROM studies WHERE id=? AND archived=0", (study_id,))
         db.execute("UPDATE studies SET pinned=0")
         db.execute("UPDATE studies SET pinned=1 WHERE id=?", (study_id,))
+        return study_data(db, study_id)
+
+
+class StudyDetails(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
+    archived: bool | None = None
+
+
+@app.put("/studies/{study_id}/details")
+def edit_study_details(study_id: int, body: StudyDetails):
+    with connect() as db:
+        study = required(db, "SELECT * FROM studies WHERE id=?", (study_id,))
+        title = study["title"] if body.title is None else body.title.strip()
+        if not title:
+            raise HTTPException(400, "채팅방 이름을 입력해 주세요.")
+        archived = study["archived"] if body.archived is None else int(body.archived)
+        db.execute("UPDATE studies SET title=?,archived=?,pinned=? WHERE id=?",
+                   (title, archived, 0 if archived else study["pinned"], study_id))
+        return study_data(db, study_id)
+
+
+async def read_pdf(upload: UploadFile):
+    if not (upload.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(400, "PDF 파일을 선택해 주세요.")
+    data = await upload.read(10_000_001)
+    if len(data) > 10_000_000 or not data.startswith(b"%PDF"):
+        raise HTTPException(400, "10MB 이하의 PDF 파일만 사용할 수 있습니다.")
+    try:
+        source = PdfReader(io.BytesIO(data))
+        if len(source.pages) > 100:
+            raise HTTPException(400, "교안은 100페이지 이하여야 합니다.")
+        pages = [(i + 1, (page.extract_text() or "").strip()) for i, page in enumerate(source.pages)]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, "PDF를 읽지 못했습니다.") from exc
+    if sum(len(body) for _, body in pages) < 80:
+        raise HTTPException(400, "텍스트가 부족한 PDF입니다. 스캔 문서는 OCR 후 업로드해 주세요.")
+    return pages
+
+
+@app.put("/studies/{study_id}/pdf")
+async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
+    pages = await read_pdf(pdf)
+    with connect() as db:
+        study = required(db, "SELECT * FROM studies WHERE id=?", (study_id,))
+        db.execute("INSERT INTO page_history(study_id,pdf_version,page_no,body,pdf_name) "
+                   "SELECT study_id,?,page_no,body,? FROM pages WHERE study_id=?",
+                   (study["pdf_version"], study["pdf_name"], study_id))
+        db.execute("DELETE FROM pages WHERE study_id=?", (study_id,))
+        db.executemany("INSERT INTO pages VALUES(?,?,?)", [(study_id, n, text) for n, text in pages])
+        db.execute("UPDATE studies SET pdf_name=?,pdf_version=pdf_version+1 WHERE id=?",
+                   (pdf.filename, study_id))
+        for week in db.execute("SELECT week_no,scope FROM weeks WHERE study_id=? AND status!='complete'", (study_id,)):
+            if study["pdf_name"] and not re.fullmatch(r"\d+\s*[~\-]\s*\d+\s*쪽", week["scope"]):
+                continue
+            first = min(len(pages), math.ceil((week["week_no"] - 1) * len(pages) / study["weeks"]) + 1)
+            last = max(first, math.ceil(week["week_no"] * len(pages) / study["weeks"]))
+            db.execute("UPDATE weeks SET scope=? WHERE study_id=? AND week_no=?",
+                       (f"{first}~{last}쪽", study_id, week["week_no"]))
         return study_data(db, study_id)
 
 
@@ -94,22 +154,7 @@ async def create_study(
         raise HTTPException(400, "AI 스터디원 수준과 이해 상태를 확인해 주세요.")
     pages = []
     if pdf is not None:
-        if not (pdf.filename or "").lower().endswith(".pdf"):
-            raise HTTPException(400, "PDF 파일을 선택해 주세요.")
-        data = await pdf.read(10_000_001)
-        if len(data) > 10_000_000 or not data.startswith(b"%PDF"):
-            raise HTTPException(400, "10MB 이하의 PDF 파일만 사용할 수 있습니다.")
-        try:
-            source = PdfReader(io.BytesIO(data))
-            if len(source.pages) > 100:
-                raise HTTPException(400, "교안은 100페이지 이하여야 합니다.")
-            pages = [(i + 1, (page.extract_text() or "").strip()) for i, page in enumerate(source.pages)]
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(400, "PDF를 읽지 못했습니다.") from exc
-        if sum(len(body) for _, body in pages) < 80:
-            raise HTTPException(400, "텍스트가 부족한 PDF입니다. 스캔 문서는 OCR 후 업로드해 주세요.")
+        pages = await read_pdf(pdf)
     page_count = len(pages)
     with connect() as db:
         cur = db.execute(
@@ -242,6 +287,12 @@ def start_session(study_id: int, week_no: int, body: Note):
 
 def session_data(db, session_id):
     session = obj(required(db, "SELECT * FROM sessions WHERE id=?", (session_id,)))
+    study = required(db, "SELECT pdf_name,pdf_version,weeks FROM studies WHERE id=?", (session["study_id"],))
+    session["pdf_name"] = study["pdf_name"]
+    session["pdf_version"] = study["pdf_version"]
+    session["total_weeks"] = study["weeks"]
+    session["page_count"] = db.execute("SELECT COUNT(*) FROM pages WHERE study_id=?",
+                                       (session["study_id"],)).fetchone()[0]
     session["week"] = obj(required(db, "SELECT * FROM weeks WHERE study_id=? AND week_no=?",
                                    (session["study_id"], session["week_no"])))
     session["week"]["review"] = loads(session["week"]["review"])
@@ -257,6 +308,28 @@ def session_data(db, session_id):
 def get_session(session_id: int):
     with connect() as db:
         return session_data(db, session_id)
+
+
+@app.get("/sessions/{session_id}/sources/{message_id}")
+def message_source(session_id: int, message_id: int):
+    with connect() as db:
+        session = required(db, "SELECT study_id FROM sessions WHERE id=?", (session_id,))
+        message = required(db, "SELECT page_no,pdf_version FROM messages WHERE id=? AND session_id=?",
+                           (message_id, session_id))
+        if message["page_no"] is None:
+            raise HTTPException(404, "이 메시지에는 교안 쪽수가 없습니다.")
+        study = required(db, "SELECT pdf_name,pdf_version FROM studies WHERE id=?", (session["study_id"],))
+        version = message["pdf_version"] if message["pdf_version"] is not None else 0
+        if version == study["pdf_version"]:
+            page = required(db, "SELECT body FROM pages WHERE study_id=? AND page_no=?",
+                            (session["study_id"], message["page_no"]))
+            name = study["pdf_name"]
+        else:
+            page = required(db, "SELECT body,pdf_name FROM page_history "
+                            "WHERE study_id=? AND pdf_version=? AND page_no=?",
+                            (session["study_id"], version, message["page_no"]))
+            name = page["pdf_name"]
+        return {"page_no": message["page_no"], "text": page["body"], "pdf_name": name}
 
 
 def source_pages(db, study_id, scope, note, week_no=None, total_weeks=None):
@@ -357,8 +430,9 @@ async def next_question(session_id: int):
         if comment:
             db.execute("INSERT INTO messages(session_id,role,member_no,body) VALUES(?,?,?,?)",
                        (session_id, "assistant_comment", comment_member_no, comment))
-        db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no) VALUES(?,?,?,?,?)",
-                   (session_id, "assistant", speaker["member_no"], question, page_no))
+        db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no,pdf_version) VALUES(?,?,?,?,?,?)",
+                   (session_id, "assistant", speaker["member_no"], question, page_no,
+                    study["pdf_version"] if page_no is not None else None))
         db.execute("UPDATE sessions SET next_member=? WHERE id=?",
                    (speaker["member_no"] % len(study["members"]) + 1, session_id))
         db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
@@ -400,8 +474,9 @@ async def explain(session_id: int):
         current = session_data(db, session_id)
         if current["status"] != "active" or len(current["messages"]) != len(messages):
             raise HTTPException(409, "세션이 변경되었습니다. 다시 시도해 주세요.")
-        db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no) VALUES(?,?,?,?,?)",
-                   (session_id, "assistant_hint", question["member_no"], explanation, page_no))
+        db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no,pdf_version) VALUES(?,?,?,?,?,?)",
+                   (session_id, "assistant_hint", question["member_no"], explanation, page_no,
+                    study["pdf_version"] if page_no is not None else None))
         return session_data(db, session_id)
 
 
@@ -452,8 +527,9 @@ async def answer(session_id: int, body: Answer):
             raise HTTPException(409, "세션이 변경되었습니다. 다시 시도해 주세요.")
         db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)",
                    (session_id, "user", body.text.strip()))
-        db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no) VALUES(?,?,?,?,?)",
-                   (session_id, "assistant_reaction", question["member_no"], reaction, page_no))
+        db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no,pdf_version) VALUES(?,?,?,?,?,?)",
+                   (session_id, "assistant_reaction", question["member_no"], reaction, page_no,
+                    study["pdf_version"] if page_no is not None else None))
         if result.get("understanding"):
             db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
                        (str(result["understanding"])[:500], session["study_id"], question["member_no"]))

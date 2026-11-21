@@ -39,6 +39,18 @@ class Api {
     }
     return jsonDecode(text);
   }
+  static Future<dynamic> uploadPdf(int studyId, PlatformFile pdf) async {
+    final request = http.MultipartRequest('PUT', url('/studies/$studyId/pdf'));
+    request.files.add(http.MultipartFile.fromBytes('pdf', pdf.bytes!, filename: pdf.name));
+    final response = await request.send();
+    final text = await response.stream.bytesToString();
+    if (response.statusCode >= 400) {
+      dynamic error;
+      try { error = jsonDecode(text)['detail']; } catch (_) { error = text; }
+      throw Exception(error);
+    }
+    return jsonDecode(text);
+  }
 }
 
 class StudyMateApp extends StatelessWidget {
@@ -112,8 +124,10 @@ class ChatBubble extends StatelessWidget {
   final String text;
   final bool mine;
   final String? caption;
+  final VoidCallback? onCaptionTap;
   final int? peerNo;
-  const ChatBubble({super.key, required this.name, required this.text, required this.mine, this.caption, this.peerNo});
+  const ChatBubble({super.key, required this.name, required this.text, required this.mine,
+    this.caption, this.onCaptionTap, this.peerNo});
   @override Widget build(BuildContext context) => Align(
     alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
     child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 510),
@@ -134,8 +148,9 @@ class ChatBubble extends StatelessWidget {
                 borderRadius: BorderRadius.circular(16)),
                 child: Padding(padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
                   child: Text(text, style: const TextStyle(color: Color(0xFF1C2430), height: 1.48)))),
-              if (caption != null) Padding(padding: const EdgeInsets.fromLTRB(5, 5, 5, 0),
-                child: Text(caption!, style: const TextStyle(fontSize: 11, color: Color(0xFF536887)))),
+              if (caption != null) TextButton.icon(onPressed: onCaptionTap,
+                icon: const Icon(Icons.menu_book_outlined, size: 15),
+                label: Text(caption!, style: const TextStyle(fontSize: 11))),
             ])),
         ]))));
 }
@@ -159,12 +174,15 @@ class RoomShell extends StatefulWidget {
 }
 class _RoomShellState extends State<RoomShell> {
   final scaffoldKey = GlobalKey<ScaffoldState>();
+  final search = TextEditingController();
   List<dynamic> studies = [];
   int? selectedStudyId, sessionId;
   String roomTitle = '';
   bool loading = true, demoMode = false;
+  bool showArchived = false;
   String? loadError;
   @override void initState() { super.initState(); refresh(); }
+  @override void dispose() { search.dispose(); super.dispose(); }
   Future<void> refresh([int? preferredId]) async {
     setState(() { loading = true; loadError = null; });
     try {
@@ -172,9 +190,10 @@ class _RoomShellState extends State<RoomShell> {
       final items = await Api.request('GET', '/studies') as List<dynamic>;
       if (!mounted) return;
       setState(() { studies = items; demoMode = health['demo_mode'] == true; });
-      if (items.isNotEmpty) {
-        final id = preferredId ?? selectedStudyId ?? items.first['id'] as int;
-        await openRoom(items.firstWhere((s) => s['id'] == id, orElse: () => items.first));
+      final activeItems = items.where((s) => s['archived'] == 0).toList();
+      if (activeItems.isNotEmpty) {
+        final id = preferredId ?? selectedStudyId ?? activeItems.first['id'] as int;
+        await openRoom(activeItems.firstWhere((s) => s['id'] == id, orElse: () => activeItems.first));
       } else { setState(() { selectedStudyId = null; sessionId = null; }); }
     } catch (e) { if (mounted) { setState(() { loadError = e is http.ClientException
       ? '서버에 연결할 수 없어요. 서버를 켜고 다시 시도해 주세요.' : '$e'; }); } }
@@ -198,24 +217,75 @@ class _RoomShellState extends State<RoomShell> {
     if (id != null && mounted) await refresh(id);
   }
   Future<void> pinRoom(int id) async {
-    await Api.request('PUT', '/studies/$id/pin');
-    if (mounted) await refresh(id);
+    try { await Api.request('PUT', '/studies/$id/pin'); if (mounted) await refresh(id); }
+    catch (e) { if (mounted) errorMessage(context, e); }
   }
-  @override Widget build(BuildContext context) => Scaffold(key: scaffoldKey,
+  Future<void> renameRoom(dynamic room) async {
+    final controller = TextEditingController(text: room['title']);
+    final name = await showDialog<String>(context: context, builder: (dialogContext) => AlertDialog(
+      title: const Text('채팅방 이름 바꾸기'),
+      content: TextField(controller: controller, autofocus: true, maxLength: 120,
+        decoration: const InputDecoration(labelText: '새 이름')),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('취소')),
+        FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+          child: const Text('저장'))],
+    ));
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    try { await Api.request('PUT', '/studies/${room['id']}/details', {'title': name});
+      if (mounted) await refresh(selectedStudyId); }
+    catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  Future<void> archiveRoom(dynamic room, bool archived) async {
+    try {
+      await Api.request('PUT', '/studies/${room['id']}/details', {'archived': archived});
+      if (selectedStudyId == room['id'] && archived) selectedStudyId = null;
+      if (mounted) await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  Widget roomTile(dynamic room) => ListTile(
+    selected: selectedStudyId == room['id'],
+    leading: const CircleAvatar(child: Icon(Icons.smart_toy_rounded)),
+    title: Text(room['title']),
+    subtitle: Text('${room['pinned'] == 1 ? '📌 시작할 방 · ' : ''}${room['goal']}',
+      maxLines: 1, overflow: TextOverflow.ellipsis),
+    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+      if (room['archived'] == 0) IconButton(tooltip: '앱 시작 방으로 고정',
+        icon: Icon(room['pinned'] == 1 ? Icons.push_pin : Icons.push_pin_outlined),
+        onPressed: () => pinRoom(room['id'] as int)),
+      PopupMenuButton<String>(tooltip: '채팅방 관리', onSelected: (value) {
+        if (value == 'rename') renameRoom(room);
+        if (value == 'archive') archiveRoom(room, true);
+        if (value == 'restore') archiveRoom(room, false);
+      }, itemBuilder: (_) => [
+        const PopupMenuItem(value: 'rename', child: Text('이름 바꾸기')),
+        PopupMenuItem(value: room['archived'] == 0 ? 'archive' : 'restore',
+          child: Text(room['archived'] == 0 ? '보관하기' : '다시 사용하기')),
+      ]),
+    ]),
+    onTap: room['archived'] == 1 ? () => archiveRoom(room, false) : () {
+      scaffoldKey.currentState?.closeDrawer(); openRoom(room);
+    },
+  );
+  @override Widget build(BuildContext context) {
+    final filtered = studies.where((s) =>
+      '${s['title']} ${s['goal']}'.toLowerCase().contains(search.text.trim().toLowerCase())).toList();
+    final activeRooms = filtered.where((s) => s['archived'] == 0).toList();
+    final archivedRooms = filtered.where((s) => s['archived'] == 1).toList();
+    return Scaffold(key: scaffoldKey,
     drawer: Drawer(child: SafeArea(child: Column(children: [
       const ListTile(title: Text('스터디 채팅방', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700))),
       if (demoMode) const ListTile(title: Text('체험 모드'), subtitle: Text('AI 답변은 예시로 보여드려요.')),
-      Expanded(child: ListView(children: studies.map((s) => ListTile(
-        selected: selectedStudyId == s['id'],
-        leading: const CircleAvatar(child: Icon(Icons.smart_toy_rounded)),
-        title: Text(s['title']),
-        subtitle: Text('${s['pinned'] == 1 ? '📌 시작할 방 · ' : ''}${s['goal']}',
-          maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: IconButton(tooltip: '앱 시작 방으로 고정',
-          icon: Icon(s['pinned'] == 1 ? Icons.push_pin : Icons.push_pin_outlined),
-          onPressed: () => pinRoom(s['id'] as int)),
-        onTap: () { scaffoldKey.currentState?.closeDrawer(); openRoom(s); },
-      )).toList())),
+      Padding(padding: const EdgeInsets.all(12), child: TextField(controller: search,
+        onChanged: (_) => setState(() {}), decoration: const InputDecoration(
+          prefixIcon: Icon(Icons.search), hintText: '채팅방 검색'))),
+      Expanded(child: ListView(children: [
+        ...activeRooms.map(roomTile),
+        if (archivedRooms.isNotEmpty) ExpansionTile(
+          initiallyExpanded: showArchived, onExpansionChanged: (value) => showArchived = value,
+          leading: const Icon(Icons.archive_outlined), title: Text('보관한 방 (${archivedRooms.length})'),
+          children: archivedRooms.map(roomTile).toList()),
+      ])),
       ListTile(leading: const Icon(Icons.add_circle_outline), title: const Text('새 채팅방 만들기'), onTap: createRoom),
       if (selectedStudyId != null) ListTile(leading: const Icon(Icons.calendar_month_outlined),
         title: const Text('학습 계획과 기록'), onTap: () async {
@@ -232,6 +302,7 @@ class _RoomShellState extends State<RoomShell> {
       : SessionPage(key: ValueKey(sessionId), id: sessionId!, studyTitle: roomTitle,
           onMenu: () => scaffoldKey.currentState?.openDrawer(), onFinished: () => refresh(selectedStudyId)),
   );
+  }
 }
 
 class CreatePage extends StatefulWidget {
@@ -657,6 +728,88 @@ class _SessionPageState extends State<SessionPage> {
     final saved = await act('answer', {'text': answer.text.trim(), 'needs_review': needsReview});
     if (saved && mounted) await act('question');
   }
+  Future<void> attachPdf() async {
+    final picked = await FilePicker.platform.pickFiles(type: FileType.custom,
+      allowedExtensions: ['pdf'], withData: true);
+    if (picked == null || !mounted) return;
+    final file = picked.files.single;
+    if (file.size > 10000000 || file.bytes == null) {
+      errorMessage(context, '10MB 이하의 PDF를 선택해 주세요.'); return;
+    }
+    if ((session?['pdf_name'] as String? ?? '').isNotEmpty) {
+      final replace = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
+        title: const Text('교안을 바꿀까요?'),
+        content: const Text('새 교안은 앞으로의 질문에 쓰여요. 예전 대화의 교안 내용도 기록에서 확인할 수 있어요.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('취소')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('교체하기'))],
+      ));
+      if (replace != true || !mounted) return;
+    }
+    setState(() => busy = true);
+    try {
+      await Api.uploadPdf(session!['study_id'] as int, file);
+      if (mounted) await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+    finally { if (mounted) setState(() => busy = false); }
+  }
+  Future<void> showSource(int messageId) async {
+    try {
+      final source = await Api.request('GET', '/sessions/${widget.id}/sources/$messageId');
+      if (!mounted) return;
+      await showModalBottomSheet<void>(context: context, isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(child: Padding(
+          padding: const EdgeInsets.all(20), child: SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height * 0.68,
+            child: ListView(children: [
+              Text('${source['pdf_name']} · ${source['page_no']}쪽',
+                style: Theme.of(sheetContext).textTheme.titleMedium),
+              const SizedBox(height: 14),
+              SelectableText('${source['text']}', style: const TextStyle(height: 1.5)),
+            ])))));
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  Future<void> showRecords() async {
+    try {
+      final records = await Api.request('GET', '/studies/${session!['study_id']}/minutes') as List<dynamic>;
+      if (!mounted) return;
+      await showModalBottomSheet<void>(context: context, isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(child: Padding(
+          padding: const EdgeInsets.all(18), child: SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height * 0.72,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('지난 스터디 기록', style: Theme.of(sheetContext).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              Expanded(child: records.isEmpty
+                ? const Center(child: Text('대화를 마치면 여기에 기록이 쌓여요.'))
+                : ListView(children: records.reversed.map((record) {
+                    final minutes = record['minutes'] as Map<String, dynamic>;
+                    final checks = (minutes['next_checks'] as List?) ?? [];
+                    return Card(child: ExpansionTile(
+                      title: Text('${record['week_no']}주차 이야기'),
+                      subtitle: Text('${minutes['summary']}', maxLines: 2,
+                        overflow: TextOverflow.ellipsis),
+                      children: [Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('${minutes['summary']}'),
+                          if ('${minutes['initial_note'] ?? ''}'.isNotEmpty) ...[
+                            const SizedBox(height: 12), const Text('처음 생각',
+                              style: TextStyle(fontWeight: FontWeight.w700)),
+                            Text('${minutes['initial_note']}'),
+                          ],
+                          if ('${minutes['revised_note'] ?? ''}'.isNotEmpty) ...[
+                            const SizedBox(height: 12), const Text('다시 정리한 생각',
+                              style: TextStyle(fontWeight: FontWeight.w700)),
+                            Text('${minutes['revised_note']}'),
+                          ],
+                          const SizedBox(height: 12), const Text('다시 볼 내용',
+                            style: TextStyle(fontWeight: FontWeight.w700)),
+                          Text(checks.isEmpty ? '없어요' : checks.map((x) => '• $x').join('\n')),
+                        ]))],
+                    ));
+                  }).toList())),
+            ])))));
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
   Future<void> togglePrevious(bool value) async {
     final current = session!['week'] as Map<String, dynamic>;
     try {
@@ -685,10 +838,7 @@ class _SessionPageState extends State<SessionPage> {
             FilledButton(onPressed: () => Navigator.pop(sheetContext, revised.text.trim()),
               child: const Text('대화 마치고 기록 저장하기')),
           ])))));
-    if (note != null && mounted) {
-      final saved = await act('finish', {'revised_note': note});
-      if (saved && widget.onFinished != null) await widget.onFinished!();
-    }
+    if (note != null && mounted) await act('finish', {'revised_note': note});
   }
   @override Widget build(BuildContext context) {
     final s = session;
@@ -705,6 +855,12 @@ class _SessionPageState extends State<SessionPage> {
       appBar: AppBar(backgroundColor: const Color(0xFFF8FAFF),
         leading: widget.onMenu == null ? null : IconButton(
           tooltip: '채팅방 목록', icon: const Icon(Icons.menu), onPressed: widget.onMenu),
+        actions: [IconButton(tooltip: '지난 스터디 기록', onPressed: s == null ? null : showRecords,
+          icon: const Icon(Icons.history_rounded)),
+          IconButton(tooltip: (s?['pdf_name'] as String? ?? '').isEmpty
+            ? '교안 추가하기' : '교안 교체하기',
+          onPressed: busy || s == null ? null : attachPdf,
+          icon: const Icon(Icons.attach_file_rounded))],
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(widget.studyTitle ?? '${s?['week_no'] ?? ''}주차 스터디방',
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
@@ -720,6 +876,11 @@ class _SessionPageState extends State<SessionPage> {
                 Text('${s['week_no']}주차 · ${currentWeek['title']}',
                   style: const TextStyle(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 5), Text('${currentWeek['scope']}'),
+                if ((s['pdf_name'] as String).isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Text('교안 · ${s['pdf_name']} (${s['page_count']}쪽)',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF536887))),
+                ],
                 if ((currentWeek['review'] as List).isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Text('다시 볼 내용 · ${(currentWeek['review'] as List).join(', ')}'),
@@ -763,7 +924,8 @@ class _SessionPageState extends State<SessionPage> {
                 : m['role'] == 'assistant' ? peerLabel(m['member_no'] as int) : '나',
               text: '${m['body']}', mine: m['role'] == 'user',
               peerNo: m['role'] == 'user' ? null : m['member_no'] as int,
-              caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽 참고')),
+              caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽 보기',
+              onCaptionTap: m['page_no'] == null ? null : () => showSource(m['id'] as int))),
             if (messages.isEmpty) const Center(child: Padding(
               padding: EdgeInsets.all(18), child: Text('AI 친구가 첫 질문을 준비하고 있어요...'))),
             if (busyAction == 'question' || busyAction == 'answer')
@@ -792,8 +954,10 @@ class _SessionPageState extends State<SessionPage> {
           SafeArea(top: false, child: Container(color: Colors.white,
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 12), child: Column(
               mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                if (finished) FilledButton(onPressed: () => Navigator.pop(context),
-                  child: const Text('스터디로 돌아가기'))
+                if (finished) FilledButton.icon(
+                  onPressed: widget.onFinished ?? () => Navigator.pop(context),
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  label: Text(s['week_no'] < s['total_weeks'] ? '다음 주 채팅 시작하기' : '이번 주 다시 대화하기'))
                 else if (awaiting) ...[
                   if (messages.last['role'] == 'assistant')
                     Align(alignment: Alignment.centerLeft, child: TextButton.icon(

@@ -30,6 +30,16 @@ def sample_pdf():
     return output.getvalue()
 
 
+def replacement_pdf():
+    output = io.BytesIO()
+    pdf = canvas.Canvas(output)
+    pdf.drawString(40, 750, "Sorting algorithms compare pairs and reorder elements in a list.")
+    pdf.drawString(40, 730, "Insertion sort moves each item into a sorted prefix. Merge sort divides the list.")
+    pdf.drawString(40, 710, "Compare running time and memory use for different input sizes.")
+    pdf.save()
+    return output.getvalue()
+
+
 async def fake_ai(instructions, payload):
     if "답변 검토" in instructions:
         pages = payload["source_pages"]
@@ -55,6 +65,38 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_room_management_and_later_pdf_keep_old_sources(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+            client = TestClient(app)
+            study = client.post("/studies", data={"title": "첫 이름", "goal": "정렬 배우기",
+                "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"}).json()
+            study_id = study["id"]
+            renamed = client.put(f"/studies/{study_id}/details", json={"title": "새 이름"})
+            self.assertEqual(renamed.json()["title"], "새 이름")
+            first_pdf = client.put(f"/studies/{study_id}/pdf",
+                files={"pdf": ("first.pdf", sample_pdf(), "application/pdf")})
+            self.assertEqual(first_pdf.status_code, 200, first_pdf.text)
+            self.assertEqual(first_pdf.json()["weeks"][0]["scope"], "1~1쪽")
+            session_id = client.post(f"/studies/{study_id}/weeks/1/sessions", json={"text": ""}).json()["session_id"]
+            asked = client.post(f"/sessions/{session_id}/question")
+            self.assertEqual(asked.status_code, 200, asked.text)
+            message_id = asked.json()["messages"][-1]["id"]
+            old_source = client.get(f"/sessions/{session_id}/sources/{message_id}").json()
+            self.assertEqual(old_source["pdf_name"], "first.pdf")
+            self.assertIn("Neural network", old_source["text"])
+            changed = client.put(f"/studies/{study_id}/pdf",
+                files={"pdf": ("sorting.pdf", replacement_pdf(), "application/pdf")})
+            self.assertEqual(changed.status_code, 200, changed.text)
+            self.assertEqual(changed.json()["pdf_name"], "sorting.pdf")
+            self.assertEqual(client.get(f"/sessions/{session_id}/sources/{message_id}").json(), old_source)
+            self.assertEqual(client.get(f"/sessions/{session_id}").json()["pdf_name"], "sorting.pdf")
+            archived = client.put(f"/studies/{study_id}/details", json={"archived": True})
+            self.assertEqual(archived.json()["archived"], 1)
+            self.assertEqual(client.get("/studies").json()[-1]["id"], study_id)
+            self.assertEqual(client.put(f"/studies/{study_id}/pin").status_code, 404)
+            self.assertEqual(client.put(f"/studies/{study_id}/details", json={"archived": False}).json()["archived"], 0)
+
     def test_offline_mode_is_default_and_live_requires_opt_in(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             os.environ.pop("DEMO_MODE", None)

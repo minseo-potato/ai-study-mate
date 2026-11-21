@@ -9,11 +9,17 @@ CREATE TABLE IF NOT EXISTS studies (
  id INTEGER PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL,
  start_date TEXT NOT NULL, weeks INTEGER NOT NULL, hours_per_week REAL NOT NULL,
  member_count INTEGER NOT NULL, rules TEXT NOT NULL, pdf_name TEXT NOT NULL,
- pinned INTEGER NOT NULL DEFAULT 0
+ pinned INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
+ pdf_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS pages (
  study_id INTEGER NOT NULL, page_no INTEGER NOT NULL, body TEXT NOT NULL,
  PRIMARY KEY(study_id,page_no)
+);
+CREATE TABLE IF NOT EXISTS page_history (
+ study_id INTEGER NOT NULL, pdf_version INTEGER NOT NULL, page_no INTEGER NOT NULL,
+ body TEXT NOT NULL, pdf_name TEXT NOT NULL,
+ PRIMARY KEY(study_id,pdf_version,page_no)
 );
 CREATE TABLE IF NOT EXISTS weeks (
  study_id INTEGER NOT NULL, week_no INTEGER NOT NULL, title TEXT NOT NULL,
@@ -35,7 +41,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE TABLE IF NOT EXISTS messages (
  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, role TEXT NOT NULL,
- member_no INTEGER, body TEXT NOT NULL, page_no INTEGER
+ member_no INTEGER, body TEXT NOT NULL, page_no INTEGER, pdf_version INTEGER
 );
 """
 
@@ -49,6 +55,13 @@ def connect():
     study_columns = {row["name"] for row in db.execute("PRAGMA table_info(studies)")}
     if "pinned" not in study_columns:
         db.execute("ALTER TABLE studies ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+    if "archived" not in study_columns:
+        db.execute("ALTER TABLE studies ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+    if "pdf_version" not in study_columns:
+        db.execute("ALTER TABLE studies ADD COLUMN pdf_version INTEGER NOT NULL DEFAULT 0")
+    message_columns = {row["name"] for row in db.execute("PRAGMA table_info(messages)")}
+    if "pdf_version" not in message_columns:
+        db.execute("ALTER TABLE messages ADD COLUMN pdf_version INTEGER")
     week_columns = {row["name"] for row in db.execute("PRAGMA table_info(weeks)")}
     if "progress_percent" not in week_columns:
         db.execute("ALTER TABLE weeks ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
