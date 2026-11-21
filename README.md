@@ -1,6 +1,8 @@
 # AI 스터디메이트
 
 학술제 참가신청서의 프로젝트 기획을 구현한 로컬 시연용 Flutter + FastAPI 프로젝트입니다. 
+
+이전 버전의 변경 내용은 [한국어 버전 기록](CHANGELOG.md)에서 확인할 수 있습니다.
 ## 실행
 
 Python 3.11 이상과 Flutter SDK가 필요합니다. API 키는 서버의 환경변수 또는 `backend/.env`에만 저장합니다. 앱 화면이나 GitHub에 넣지 않습니다.
