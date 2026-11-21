@@ -93,7 +93,13 @@ def demo_response(instructions: str, payload: dict) -> dict:
     earlier_pages = payload.get("previous_source_pages", [])
     use_earlier = bool(payload.get("include_previous_questions") and earlier_pages and
                        member["perspective"] == "앞 주차와의 연결")
-    chosen_page = earlier_pages[0] if use_earlier else (current_pages[0] if current_pages else None)
+    review_focus = str(payload.get("review_focus") or "").strip() if question_count == 0 else ""
+    if review_focus and earlier_pages:
+        chosen_page = earlier_pages[0]
+    elif use_earlier:
+        chosen_page = earlier_pages[0]
+    else:
+        chosen_page = current_pages[0] if current_pages else None
     lead = (chosen_page["text"][:65].replace("\n", " ") if chosen_page
             else payload["week"]["title"][:45] if payload.get("week") else payload["study_goal"][:45])
     first_question = (f"교안에서 '{lead}'를 읽었어요. 여기서 가장 중요한 개념은 뭐라고 생각해요?"
@@ -109,6 +115,8 @@ def demo_response(instructions: str, payload: dict) -> dict:
         f"지금까지 나눈 이야기와 '{lead}'를 연결해 보면 어떤 생각이 들어요?",
     ]
     chosen_question = questions[question_count % len(questions)]
+    if review_focus:
+        chosen_question = f"지난번에 남겨둔 '{review_focus[:80]}'부터 같이 확인해 볼까요? 지금은 어떻게 설명할 수 있어요?"
     if question_count >= len(questions):
         chosen_question = f"이번엔 {question_count + 1}번째로 생각해 볼게요. {chosen_question}"
     comment = ("이번 주 내용 같이 살펴봐요!" if not previous else

@@ -66,6 +66,26 @@ async def fake_ai(instructions, payload):
 
 
 class FlowTest(unittest.TestCase):
+    def test_next_week_starts_with_pending_review_when_enabled(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+            client = TestClient(app)
+            study = client.post("/studies", data={"title": "신경망", "goal": "훈련 이해",
+                "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"},
+                files={"pdf": ("guide.pdf", sample_pdf(), "application/pdf")}).json()
+            first_id = client.post(f"/studies/{study['id']}/weeks/1/sessions",
+                                   json={"text": ""}).json()["session_id"]
+            first_question = client.post(f"/sessions/{first_id}/question").json()["messages"][-1]["body"]
+            client.post(f"/sessions/{first_id}/answer",
+                        json={"text": "조금 더 살펴보겠습니다.", "needs_review": True})
+            client.post(f"/sessions/{first_id}/finish", json={"revised_note": ""})
+            second_id = client.post(f"/studies/{study['id']}/weeks/2/sessions",
+                                    json={"text": ""}).json()["session_id"]
+            second_question = client.post(f"/sessions/{second_id}/question")
+            self.assertEqual(second_question.status_code, 200, second_question.text)
+            self.assertIn(first_question[:30], second_question.json()["messages"][-1]["body"])
+            self.assertEqual(second_question.json()["messages"][-1]["page_no"], 1)
+
     def test_review_queue_and_learning_report_follow_real_study_records(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):

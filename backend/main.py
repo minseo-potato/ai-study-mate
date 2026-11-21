@@ -360,6 +360,9 @@ async def next_question(session_id: int):
         member = study["members"][(session["next_member"] - 1) % len(study["members"])]
         week = study["weeks"][session["week_no"] - 1]
         question_week = {**week, "review": week["review"] if week["include_previous_questions"] else []}
+        question_count = sum(m["role"] == "assistant" for m in session["messages"])
+        review_focus = (week["review"][0] if week["include_previous_questions"] and
+                        session["week_no"] > 1 and question_count == 0 and week["review"] else "")
         pages = source_pages(db, session["study_id"], week["scope"],
                              session["initial_note"] or study["goal"], session["week_no"], len(study["weeks"]))
         previous_context, previous_pages = [], []
@@ -384,13 +387,14 @@ async def next_question(session_id: int):
         "질문은 한 개만 하세요. 각 동료의 수준·누적 이해·앞선 발언을 반영하고, 반복적인 칭찬이나 시험 문제 같은 말투를 피하세요. "
         "사용자 답변과 직전 동료의 반응에 맞춰 후속 질문을 바꾸세요. 발표문이 비어 있으면 current_source_pages의 교안 내용을 중심으로 질문하세요. "
         "사용자 답변을 그대로 인용해 질문하지 마세요. 무관한 답변을 받았다면 교안의 핵심 개념으로 부드럽게 돌아오세요. "
-        "include_previous_questions가 참이면 이전 주차의 기록과 교안도 질문할 수 있습니다. 거짓이면 이번 주차 범위만 질문하세요. "
+        "include_previous_questions가 참이고 review_focus가 있으면 이번 세션 첫 질문은 그 복습 내용을 먼저 확인하세요. "
+        "거짓이면 이번 주차 범위만 질문하세요. "
         "거짓이어도 동료들의 누적 understanding을 지우거나 되돌리지 마세요. 기존 질문을 반복하지 말고 바로 정답을 알려주지 마세요. "
         "교안 근거가 있다면 page_no에 제공된 쪽수 하나를 쓰고, understanding에는 질문자가 이번 대화에서 이해한 내용을 짧게 적으세요.",
         {"study_goal": study["goal"], "week": question_week, "member": member,
          "members": study["members"], "suggested_member_no": member["member_no"],
          "initial_note": session["initial_note"], "messages": session["messages"][-12:],
-         "question_count": sum(m["role"] == "assistant" for m in session["messages"]),
+         "question_count": question_count, "review_focus": review_focus,
          "asked_questions": [m["body"] for m in session["messages"] if m["role"] == "assistant"][-20:],
          "include_previous_questions": bool(week["include_previous_questions"]),
          "current_source_pages": pages, "previous_source_pages": previous_pages,
@@ -407,7 +411,7 @@ async def next_question(session_id: int):
             "이번 주 범위와 교안에 근거하고, 답변의 맥락을 이어 가세요.",
             {"study_goal": study["goal"], "week": question_week, "member": member,
              "members": study["members"], "messages": session["messages"][-12:],
-             "question_count": sum(m["role"] == "assistant" for m in session["messages"]),
+             "question_count": question_count, "review_focus": review_focus,
              "asked_questions": list(prior_questions), "source_pages": pages + previous_pages,
              "current_source_pages": pages, "previous_source_pages": previous_pages},
         )
