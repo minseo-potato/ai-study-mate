@@ -6,6 +6,8 @@
 
 | 버전 | 변경 내용 |
 | --- | --- |
+| [4fb034e](https://github.com/minseo-potato/ai-study-mate/commit/4fb034e6c09f5662fd2e8a91be5f570016d10029) | 지난 주차 질문을 켜면 남은 복습 내용으로 다음 주 첫 대화를 시작 |
+| [e94de38](https://github.com/minseo-potato/ai-study-mate/commit/e94de38e59a6fe3078d870354f47f3809728e91e) | 복습 항목 완료·다시 열기와 실제 학습 기록 기반 설명 비교 화면 추가 |
 | [976be0c](https://github.com/minseo-potato/ai-study-mate/commit/976be0cb1eda33a18c9ecca14014cf9fcb6ffeeb) | 채팅방 검색·이름 변경·보관, 교안 추가·교체와 쪽수별 원문 확인, 지난 기록 보기 |
 | [ce0f9e3](https://github.com/minseo-potato/ai-study-mate/commit/ce0f9e3897756f7ba3f3dad5e700d6b93faed45e) | 기본 실행 방식을 API 키 없이 쓰는 체험 모드로 변경 |
 | [b13665f](https://github.com/minseo-potato/ai-study-mate/commit/b13665f) | 앱을 열면 고정한 스터디 채팅방으로 바로 이동 |
