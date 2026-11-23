@@ -59,7 +59,20 @@ def health():
 @app.get("/studies")
 def list_studies():
     with connect() as db:
-        return [dict(r) for r in db.execute("SELECT * FROM studies ORDER BY archived ASC,pinned DESC,id DESC")]
+        items = [dict(r) for r in db.execute("SELECT * FROM studies ORDER BY archived ASC,pinned DESC,id DESC")]
+        for item in items:
+            week = db.execute("SELECT week_no,title,meeting_date FROM weeks WHERE study_id=? AND status!='complete' "
+                              "ORDER BY week_no LIMIT 1", (item["id"],)).fetchone() or db.execute(
+                "SELECT week_no,title,meeting_date FROM weeks WHERE study_id=? ORDER BY week_no DESC LIMIT 1",
+                (item["id"],)).fetchone()
+            last = db.execute(
+                "SELECT m.role,m.body,mb.name FROM messages m JOIN sessions s ON s.id=m.session_id "
+                "LEFT JOIN members mb ON mb.study_id=s.study_id AND mb.member_no=m.member_no "
+                "WHERE s.study_id=? ORDER BY m.id DESC LIMIT 1", (item["id"],)).fetchone()
+            item["current_week"] = dict(week) if week else None
+            item["last_message"] = None if last is None else {
+                "body": last["body"], "mine": last["role"] == "user", "name": last["name"] or ""}
+        return items
 
 
 @app.put("/studies/{study_id}/pin")

@@ -63,27 +63,33 @@ class StudyMateApp extends StatelessWidget {
     theme: ThemeData(
       useMaterial3: true,
       fontFamily: 'NotoSansKR',
-      scaffoldBackgroundColor: const Color(0xFFF7F6F3),
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B2A28),
-        dynamicSchemeVariant: DynamicSchemeVariant.monochrome, surface: Colors.white,
-        primary: const Color(0xFF2B2A28), onPrimary: Colors.white),
-      dividerTheme: const DividerThemeData(color: Color(0xFFE8E5DF)),
+      scaffoldBackgroundColor: const Color(0xFFF4F5F7),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF7C5CFC),
+        surface: Colors.white,
+        primary: const Color(0xFF7C5CFC), onPrimary: Colors.white),
+      dividerTheme: const DividerThemeData(color: Color(0xFFE9EAEE)),
       snackBarTheme: SnackBarThemeData(behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2B2A28), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-      appBarTheme: const AppBarTheme(backgroundColor: Color(0xFFF7F6F3),
+        backgroundColor: const Color(0xFF191A1C), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+      appBarTheme: const AppBarTheme(backgroundColor: Colors.white, elevation: 0, scrolledUnderElevation: 0,
+        shape: Border(bottom: BorderSide(color: Color(0xFFE9EAEE))),
         surfaceTintColor: Colors.transparent, centerTitle: false,
-        titleTextStyle: TextStyle(fontFamily: 'NotoSansKR', fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1C1B19))),
+        titleTextStyle: TextStyle(fontFamily: 'NotoSansKR', fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF191A1C))),
       cardTheme: CardThemeData(color: Colors.white, elevation: 0,
         margin: const EdgeInsets.symmetric(vertical: 6),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: Color(0xFFE8E5DF)))),
+          side: const BorderSide(color: Color(0xFFE9EAEE)))),
       inputDecorationTheme: InputDecorationTheme(
         filled: true, fillColor: Colors.white, contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFDDD9D2))),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFDDD9D2)))),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE1E3E8))),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE1E3E8)))),
       filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(
-        backgroundColor: const Color(0xFF2B2A28), foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))),
+        backgroundColor: const Color(0xFF7C5CFC), foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16), textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))),
+      chipTheme: ChipThemeData(backgroundColor: Colors.white, selectedColor: const Color(0xFFF1EDFF),
+        side: const BorderSide(color: Color(0xFFE1E3E8)), labelStyle: const TextStyle(fontFamily: 'NotoSansKR', fontSize: 13, color: Color(0xFF3A3D44)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+      listTileTheme: const ListTileThemeData(selectedColor: Color(0xFF191A1C)),
       outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
     ),
@@ -119,11 +125,25 @@ class SoftPanel extends StatelessWidget {
 }
 
 const peerNames = ['지식이', '사례이', '융합이', '탐구이'];
-const peerTints = [Color(0xFFF0EEE9), Color(0xFFF4ECE8), Color(0xFFECF0E9), Color(0xFFEFECF1)];
-const peerAccents = [Color(0xFF5B5852), Color(0xFF9A6A58), Color(0xFF5F7458), Color(0xFF6F6480)];
+const brand = Color(0xFF7C5CFC);
+const brandSoft = Color(0xFFF1EDFF);
+const ink = Color(0xFF191A1C);
+const peerTints = [Color(0xFFFFEDE4), Color(0xFFE3F7EF), Color(0xFFFDE8F0), Color(0xFFFFF4D6)];
+const peerAccents = [Color(0xFFFF7A45), Color(0xFF12B886), Color(0xFFF06595), Color(0xFFF59F00)];
 String peerLabel(int number) => peerNames[(number - 1) % peerNames.length];
 Color peerTint(int number) => peerTints[(number - 1) % peerTints.length];
 Color peerAccent(int number) => peerAccents[(number - 1) % peerAccents.length];
+
+class PeerAvatar extends StatelessWidget {
+  final int number;
+  final double size;
+  const PeerAvatar(this.number, {super.key, this.size = 36});
+  @override Widget build(BuildContext context) => Container(width: size, height: size,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(shape: BoxShape.circle, color: peerAccent(number)),
+    child: Text(peerLabel(number).characters.first, style: TextStyle(color: Colors.white,
+      fontWeight: FontWeight.w700, fontSize: size * 0.42)));
+}
 
 class ChatBubble extends StatelessWidget {
   final String name;
@@ -132,34 +152,45 @@ class ChatBubble extends StatelessWidget {
   final String? caption;
   final VoidCallback? onCaptionTap;
   final int? peerNo;
+  /// 같은 사람이 이어서 말하면 이름과 프로필을 한 번만 보여준다.
+  final bool grouped;
   const ChatBubble({super.key, required this.name, required this.text, required this.mine,
-    this.caption, this.onCaptionTap, this.peerNo});
-  @override Widget build(BuildContext context) => Align(
-    alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-    child: ConstrainedBox(constraints: BoxConstraints(
-      maxWidth: MediaQuery.sizeOf(context).width < 600 ? MediaQuery.sizeOf(context).width * 0.86 : 560),
-      child: Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Row(
-        mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          if (!mine) ...[
-            CircleAvatar(radius: 18, backgroundColor: peerTint(peerNo ?? 1),
-              child: Icon(Icons.smart_toy_rounded, size: 20, color: peerAccent(peerNo ?? 1))),
-            const SizedBox(width: 8),
-          ],
-          Flexible(child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-            children: [
-              Padding(padding: const EdgeInsets.fromLTRB(5, 0, 5, 5),
-                child: Text(name, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
-                  color: mine ? const Color(0xFF6F6A63) : peerAccent(peerNo ?? 1)))),
-              DecoratedBox(decoration: BoxDecoration(
-                color: mine ? const Color(0xFFE9E6E0) : peerTint(peerNo ?? 1),
-                borderRadius: BorderRadius.circular(16)),
-                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
-                  child: SelectableText(text, style: const TextStyle(color: Color(0xFF1F1E1C), height: 1.48)))),
-              if (caption != null) TextButton.icon(onPressed: onCaptionTap,
-                icon: const Icon(Icons.menu_book_outlined, size: 15),
-                label: Text(caption!, style: const TextStyle(fontSize: 11))),
-            ])),
-        ]))));
+    this.caption, this.onCaptionTap, this.peerNo, this.grouped = false});
+  @override Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final radius = BorderRadius.only(
+      topLeft: Radius.circular(!mine && !grouped ? 4 : 18), topRight: Radius.circular(mine && !grouped ? 4 : 18),
+      bottomLeft: const Radius.circular(18), bottomRight: const Radius.circular(18));
+    final bubble = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(color: mine ? brand : Colors.white, borderRadius: radius,
+        boxShadow: mine ? null : const [BoxShadow(color: Color(0x0F000000), blurRadius: 3, offset: Offset(0, 1))]),
+      child: SelectableText(text, style: TextStyle(color: mine ? Colors.white : ink, height: 1.5, fontSize: 15)));
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: ConstrainedBox(constraints: BoxConstraints(maxWidth: width < 600 ? width * 0.84 : 560),
+        child: Padding(padding: EdgeInsets.only(top: grouped ? 3 : 12), child: Row(
+          mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (!mine) ...[
+              grouped ? const SizedBox(width: 36) : PeerAvatar(peerNo ?? 1),
+              const SizedBox(width: 8),
+            ],
+            Flexible(child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                if (!mine && !grouped) Padding(padding: const EdgeInsets.fromLTRB(2, 0, 2, 4),
+                  child: Text(name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF3A3D44)))),
+                bubble,
+                if (caption != null) Padding(padding: const EdgeInsets.only(top: 4), child: InkWell(
+                  onTap: onCaptionTap, borderRadius: BorderRadius.circular(12),
+                  child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(12)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.menu_book_outlined, size: 14, color: brand), const SizedBox(width: 4),
+                      Text(caption!, style: const TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w600)),
+                    ])))),
+              ])),
+          ]))));
+  }
 }
 
 void errorMessage(BuildContext context, Object e) {
@@ -175,56 +206,42 @@ String weekStatusLabel(String status) => switch (status) {
   _ => '시작 전',
 };
 
+/// 첫 화면: 메신저 채팅 목록처럼 스터디 채팅방을 모아 보여주고, 누르면 채팅방 페이지로 들어간다.
 class RoomShell extends StatefulWidget {
   const RoomShell({super.key});
   @override State<RoomShell> createState() => _RoomShellState();
 }
 class _RoomShellState extends State<RoomShell> {
-  final scaffoldKey = GlobalKey<ScaffoldState>();
   final search = TextEditingController();
   List<dynamic> studies = [];
-  int? selectedStudyId, sessionId;
-  String roomTitle = '';
-  bool loading = true, demoMode = false;
-  bool showArchived = false;
+  bool loading = true, demoMode = false, searching = false, showArchived = false;
   String? loadError;
   @override void initState() { super.initState(); refresh(); }
   @override void dispose() { search.dispose(); super.dispose(); }
-  Future<void> refresh([int? preferredId]) async {
-    setState(() { loading = true; loadError = null; });
+  Future<void> refresh() async {
+    if (studies.isEmpty) setState(() { loading = true; loadError = null; });
     try {
       final health = await Api.request('GET', '/health');
       final items = await Api.request('GET', '/studies') as List<dynamic>;
-      if (!mounted) return;
-      setState(() { studies = items; demoMode = health['demo_mode'] == true; });
-      final activeItems = items.where((s) => s['archived'] == 0).toList();
-      if (activeItems.isNotEmpty) {
-        final id = preferredId ?? selectedStudyId ?? activeItems.first['id'] as int;
-        await openRoom(activeItems.firstWhere((s) => s['id'] == id, orElse: () => activeItems.first));
-      } else { setState(() { selectedStudyId = null; sessionId = null; }); }
+      if (mounted) setState(() { studies = items; demoMode = health['demo_mode'] == true; loadError = null; });
     } catch (e) { if (mounted) { setState(() { loadError = e is http.ClientException
       ? '서버에 연결할 수 없어요. 서버를 켜고 다시 시도해 주세요.' : '$e'; }); } }
     finally { if (mounted) setState(() => loading = false); }
   }
-  Future<void> openRoom(dynamic item) async {
-    try {
-      final id = item['id'] as int;
-      final study = await Api.request('GET', '/studies/$id');
-      final weeks = study['weeks'] as List<dynamic>;
-      final week = weeks.firstWhere((w) => w['status'] != 'complete', orElse: () => weeks.last);
-      final active = week['active_session_id'];
-      final roomSession = active ?? (await Api.request('POST',
-        '/studies/$id/weeks/${week['week_no']}/sessions', {'text': ''}))['session_id'];
-      if (mounted) setState(() { selectedStudyId = id; roomTitle = item['title']; sessionId = roomSession as int; });
-    } catch (e) { if (mounted) errorMessage(context, e); }
+  Future<void> enterRoom(dynamic room) async {
+    await Navigator.push(context, MaterialPageRoute(
+      builder: (_) => ChatRoomPage(studyId: room['id'] as int, title: '${room['title']}')));
+    if (mounted) refresh();
   }
   Future<void> createRoom() async {
-    scaffoldKey.currentState?.closeDrawer();
     final id = await Navigator.push<int>(context, MaterialPageRoute(builder: (_) => const CreatePage()));
-    if (id != null && mounted) await refresh(id);
+    if (id == null || !mounted) return;
+    await refresh();
+    final room = studies.firstWhere((s) => s['id'] == id, orElse: () => null);
+    if (room != null && mounted) await enterRoom(room);
   }
   Future<void> pinRoom(int id) async {
-    try { await Api.request('PUT', '/studies/$id/pin'); if (mounted) await refresh(id); }
+    try { await Api.request('PUT', '/studies/$id/pin'); if (mounted) await refresh(); }
     catch (e) { if (mounted) errorMessage(context, e); }
   }
   Future<void> renameRoom(dynamic room) async {
@@ -240,109 +257,189 @@ class _RoomShellState extends State<RoomShell> {
     controller.dispose();
     if (name == null || name.isEmpty) return;
     try { await Api.request('PUT', '/studies/${room['id']}/details', {'title': name});
-      if (mounted) await refresh(selectedStudyId); }
+      if (mounted) await refresh(); }
     catch (e) { if (mounted) errorMessage(context, e); }
   }
   Future<void> archiveRoom(dynamic room, bool archived) async {
     try {
       await Api.request('PUT', '/studies/${room['id']}/details', {'archived': archived});
-      if (selectedStudyId == room['id'] && archived) selectedStudyId = null;
       if (mounted) await refresh();
     } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  Future<void> openPlan(dynamic room) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => StudyPage(id: room['id'] as int)));
+    if (mounted) refresh();
+  }
+  /// 길게 누르거나(휴대폰) 오른쪽 클릭하면(컴퓨터) 채팅방 관리 메뉴를 연다.
+  Future<void> roomMenu(dynamic room) async {
+    final archived = room['archived'] == 1;
+    final pinned = room['pinned'] == 1;
+    final action = await showAdaptiveSheet<String>(context, (sheetContext) {
+      Widget item(String value, IconData icon, String label) => ListTile(
+        leading: Icon(icon), title: Text(label), onTap: () => Navigator.pop(sheetContext, value));
+      return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), child: Text('${room['title']}',
+          maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
+        if (!archived && !pinned) item('pin', Icons.push_pin_outlined, '맨 위에 고정'),
+        item('rename', Icons.edit_outlined, '이름 바꾸기'),
+        item('plan', Icons.calendar_month_outlined, '전체 계획·일정'),
+        item(archived ? 'restore' : 'archive', archived ? Icons.unarchive_outlined : Icons.archive_outlined,
+          archived ? '다시 사용하기' : '보관하기'),
+      ]);
+    });
+    if (action == 'pin') pinRoom(room['id'] as int);
+    if (action == 'rename') renameRoom(room);
+    if (action == 'plan') openPlan(room);
+    if (action == 'archive') archiveRoom(room, true);
+    if (action == 'restore') archiveRoom(room, false);
+  }
+  String preview(dynamic room) {
+    final last = room['last_message'];
+    if (last == null) return '대화를 시작해 보세요';
+    final body = '${last['body']}'.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (last['mine'] == true) return body;
+    final name = '${last['name']}';
+    return name.isEmpty ? body : '$name: $body';
+  }
+  String shortDate(String iso) {
+    final d = DateTime.tryParse(iso);
+    return d == null ? '' : '${d.month}월 ${d.day}일';
   }
   Widget roomTile(dynamic room) {
     final title = '${room['title']}';
     final pinned = room['pinned'] == 1;
-    return ListTile(
-      selected: selectedStudyId == room['id'],
-      selectedTileColor: const Color(0xFFEFEDE9),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      leading: CircleAvatar(backgroundColor: const Color(0xFFE9E6E0), foregroundColor: const Color(0xFF2B2A28),
-        child: Text(title.isEmpty ? '?' : title.characters.first, style: const TextStyle(fontWeight: FontWeight.w700))),
-      title: Row(children: [
-        Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis)),
-        if (pinned) const Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.push_pin, size: 14, color: mutedInk)),
-      ]),
-      subtitle: room['goal'] == room['title'] ? null : Text('${room['goal']}',
-        maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: PopupMenuButton<String>(tooltip: '채팅방 관리', icon: const Icon(Icons.more_horiz, size: 20),
-        onSelected: (value) {
-          if (value == 'pin') pinRoom(room['id'] as int);
-          if (value == 'rename') renameRoom(room);
-          if (value == 'archive') archiveRoom(room, true);
-          if (value == 'restore') archiveRoom(room, false);
-        }, itemBuilder: (_) => [
-          if (room['archived'] == 0 && !pinned) const PopupMenuItem(value: 'pin', child: Text('시작 방으로 고정')),
-          const PopupMenuItem(value: 'rename', child: Text('이름 바꾸기')),
-          PopupMenuItem(value: room['archived'] == 0 ? 'archive' : 'restore',
-            child: Text(room['archived'] == 0 ? '보관하기' : '다시 사용하기')),
-        ]),
-      onTap: room['archived'] == 1 ? () => archiveRoom(room, false) : () {
-        scaffoldKey.currentState?.closeDrawer(); openRoom(room);
-      },
+    final archived = room['archived'] == 1;
+    final week = room['current_week'];
+    final accent = peerAccents[(room['id'] as int) % peerAccents.length];
+    return InkWell(
+      onTap: () => enterRoom(room),
+      onLongPress: () => roomMenu(room),
+      onSecondaryTap: () => roomMenu(room),
+      child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), child: Row(children: [
+        Opacity(opacity: archived ? 0.5 : 1, child: Container(width: 52, height: 52, alignment: Alignment.center,
+          decoration: BoxDecoration(color: accent.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(19)),
+          child: Text(title.isEmpty ? '?' : title.characters.first,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: accent)))),
+        const SizedBox(width: 14),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700))),
+            Padding(padding: const EdgeInsets.only(left: 6), child: Text('${(room['member_count'] as int) + 1}',
+              style: const TextStyle(fontSize: 13, color: mutedInk))),
+            if (pinned) const Padding(padding: EdgeInsets.only(left: 4),
+              child: Icon(Icons.push_pin_rounded, size: 14, color: mutedInk)),
+          ]),
+          const SizedBox(height: 4),
+          Text(preview(room), maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13.5, color: Color(0xFF6B6F77))),
+        ])),
+        if (week != null) Padding(padding: const EdgeInsets.only(left: 12), child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(shortDate('${week['meeting_date']}'), style: const TextStyle(fontSize: 12, color: mutedInk)),
+          const SizedBox(height: 6),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(color: archived ? const Color(0xFFEDEEF1) : brandSoft,
+              borderRadius: BorderRadius.circular(10)),
+            child: Text('${week['week_no']}/${room['weeks']}주차', style: TextStyle(fontSize: 11,
+              fontWeight: FontWeight.w600, color: archived ? mutedInk : brand))),
+        ])),
+      ])),
     );
   }
-  Future<void> openPlan() async {
-    scaffoldKey.currentState?.closeDrawer();
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => StudyPage(id: selectedStudyId!)));
-    if (mounted) refresh(selectedStudyId);
-  }
-  /// 주차를 마치면 같은 채팅 화면에서 다음 주차 대화로 바로 이어진다.
-  Future<void> advance() async {
-    if (selectedStudyId == null) return;
-    await openRoom({'id': selectedStudyId, 'title': roomTitle});
-  }
-  Widget roomList() {
-    final filtered = studies.where((s) =>
-      '${s['title']} ${s['goal']}'.toLowerCase().contains(search.text.trim().toLowerCase())).toList();
+  @override Widget build(BuildContext context) {
+    final query = search.text.trim().toLowerCase();
+    final filtered = studies.where((s) => '${s['title']} ${s['goal']}'.toLowerCase().contains(query)).toList();
     final activeRooms = filtered.where((s) => s['archived'] == 0).toList();
     final archivedRooms = filtered.where((s) => s['archived'] == 1).toList();
-    return SafeArea(child: Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(16, 14, 8, 4), child: Row(children: [
-        const Expanded(child: Text('스터디', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700))),
-        if (demoMode) const Chip(label: Text('체험 모드', style: TextStyle(fontSize: 11)),
-          visualDensity: VisualDensity.compact),
-        IconButton(tooltip: '새 스터디', onPressed: createRoom, icon: const Icon(Icons.edit_square)),
-      ])),
-      if (studies.length > 4) Padding(padding: const EdgeInsets.fromLTRB(12, 4, 12, 8), child: TextField(controller: search,
-        onChanged: (_) => setState(() {}), decoration: const InputDecoration(isDense: true,
-          prefixIcon: Icon(Icons.search, size: 20), hintText: '검색'))),
-      Expanded(child: ListView(padding: const EdgeInsets.symmetric(horizontal: 8), children: [
+    final Widget body;
+    if (loading) {
+      body = const Center(child: CircularProgressIndicator());
+    } else if (loadError != null) {
+      body = Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(loadError!), TextButton(onPressed: refresh, child: const Text('다시 시도'))]));
+    } else if (studies.isEmpty) {
+      body = Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.forum_outlined, size: 48, color: mutedInk),
+        const SizedBox(height: 16),
+        const Text('아직 스터디가 없어요', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 20),
+        FilledButton.icon(onPressed: createRoom, icon: const Icon(Icons.add), label: const Text('스터디 시작하기')),
+      ]));
+    } else {
+      body = RefreshIndicator(onRefresh: refresh, child: ListView(padding: const EdgeInsets.only(bottom: 96), children: [
+        if (searching) Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 8), child: TextField(
+          controller: search, autofocus: true, onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(isDense: true, prefixIcon: Icon(Icons.search, size: 20),
+            hintText: '채팅방 이름 검색'))),
         ...activeRooms.map(roomTile),
+        if (activeRooms.isEmpty && query.isNotEmpty) const Padding(padding: EdgeInsets.all(32),
+          child: Center(child: Text('찾는 채팅방이 없어요', style: TextStyle(color: mutedInk)))),
         if (archivedRooms.isNotEmpty) Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
             initiallyExpanded: showArchived, onExpansionChanged: (value) => showArchived = value,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 20),
             title: Text('보관함 ${archivedRooms.length}', style: const TextStyle(fontSize: 13, color: mutedInk)),
             children: archivedRooms.map(roomTile).toList())),
-      ])),
-      if (selectedStudyId != null) Padding(padding: const EdgeInsets.all(8), child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        leading: const Icon(Icons.calendar_month_outlined), title: const Text('전체 계획·기록'), onTap: openPlan)),
-    ]));
-  }
-  @override Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= wideBreakpoint;
-    final Widget content = loading ? const Center(child: CircularProgressIndicator())
-      : loadError != null ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(loadError!), TextButton(onPressed: refresh, child: const Text('다시 시도'))]))
-      : sessionId == null ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.forum_outlined, size: 48, color: Color(0xFF8A857E)),
-          const SizedBox(height: 16),
-          const Text('AI 스터디메이트', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 24),
-          FilledButton.icon(onPressed: createRoom,
-            icon: const Icon(Icons.add), label: const Text('스터디 시작하기')),
-        ]))
-      : SessionPage(key: ValueKey(sessionId), id: sessionId!, studyTitle: roomTitle,
-          onMenu: wide ? null : () => scaffoldKey.currentState?.openDrawer(), onFinished: advance);
-    if (wide) {
-      return Scaffold(key: scaffoldKey, body: Row(children: [
-        Container(width: 300, decoration: const BoxDecoration(color: Colors.white,
-          border: Border(right: BorderSide(color: lineColor))), child: roomList()),
-        Expanded(child: content),
       ]));
     }
-    return Scaffold(key: scaffoldKey, drawer: Drawer(backgroundColor: Colors.white, child: roomList()), body: content);
+    return ColoredBox(color: const Color(0xFFF4F5F7), child: Center(child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: chatMaxWidth), child: Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        titleSpacing: 20,
+        shape: const Border(),
+        title: Row(children: [
+          const Text('채팅', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+          if (demoMode) Container(margin: const EdgeInsets.only(left: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(8)),
+            child: const Text('체험 모드', style: TextStyle(fontSize: 11, color: brand, fontWeight: FontWeight.w600))),
+        ]),
+        actions: [
+          if (studies.length > 1) IconButton(tooltip: '검색', isSelected: searching,
+            icon: const Icon(Icons.search_rounded), selectedIcon: const Icon(Icons.close_rounded),
+            onPressed: () => setState(() { searching = !searching; if (!searching) search.clear(); })),
+          IconButton(tooltip: '새 스터디', onPressed: createRoom, icon: const Icon(Icons.add_comment_outlined)),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: body,
+    ))));
+  }
+}
+
+/// 채팅방 페이지. 주차가 끝나면 같은 화면에서 다음 주차 대화로 바로 이어진다.
+class ChatRoomPage extends StatefulWidget {
+  final int studyId;
+  final String title;
+  const ChatRoomPage({super.key, required this.studyId, required this.title});
+  @override State<ChatRoomPage> createState() => _ChatRoomPageState();
+}
+class _ChatRoomPageState extends State<ChatRoomPage> {
+  int? sessionId;
+  String? error;
+  @override void initState() { super.initState(); resolve(); }
+  Future<void> resolve() async {
+    try {
+      final study = await Api.request('GET', '/studies/${widget.studyId}');
+      final weeks = study['weeks'] as List<dynamic>;
+      final week = weeks.firstWhere((w) => w['status'] != 'complete', orElse: () => weeks.last);
+      final active = week['active_session_id'];
+      final id = active ?? (await Api.request('POST',
+        '/studies/${widget.studyId}/weeks/${week['week_no']}/sessions', {'text': ''}))['session_id'];
+      if (mounted) setState(() { sessionId = id as int; error = null; });
+    } catch (e) { if (mounted) setState(() => error = '$e'); }
+  }
+  @override Widget build(BuildContext context) {
+    if (sessionId != null) {
+      return SessionPage(key: ValueKey(sessionId), id: sessionId!, studyTitle: widget.title, onFinished: resolve);
+    }
+    return Scaffold(backgroundColor: const Color(0xFFF4F5F7), appBar: AppBar(title: Text(widget.title)),
+      body: Center(child: error == null ? const CircularProgressIndicator()
+        : Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(error!), TextButton(onPressed: resolve, child: const Text('다시 시도'))])));
   }
 }
 
@@ -449,7 +546,7 @@ class _CreatePageState extends State<CreatePage> {
             decoration: const InputDecoration(labelText: '지금 이해한 내용이나 헷갈리는 부분')),
         ]))),
       const SizedBox(height: 12),
-      Card(child: ListTile(leading: const Icon(Icons.event_outlined, color: Color(0xFF2B2A28)),
+      Card(child: ListTile(leading: const Icon(Icons.event_outlined, color: Color(0xFF7C5CFC)),
         title: Text('시작일  ${start.year}-${start.month}-${start.day}'), trailing: const Icon(Icons.chevron_right),
         onTap: () async { final d = await showDatePicker(context: context, initialDate: start,
           firstDate: DateTime(2020), lastDate: DateTime(2100)); if (d != null) setState(() => start = d); })),
@@ -514,20 +611,20 @@ class _StudyPageState extends State<StudyPage> {
     final completed = weeks.where((w) => w['status'] == 'complete').length;
     return Scaffold(appBar: AppBar(title: Text(study?['title'] ?? '스터디')),
       body: study == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
-        SoftPanel(color: const Color(0xFFF0EEEA), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SoftPanel(color: const Color(0xFFF6F4FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(study!['goal'], style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Text((study!['pdf_name'] as String).isEmpty ? '교안 없이 내 방식대로 공부해요' : '함께 볼 교안 · ${study!['pdf_name']}',
-            style: const TextStyle(color: Color(0xFF6F6A63))),
+            style: const TextStyle(color: Color(0xFF8B8F97))),
           const SizedBox(height: 16),
           Text('$completed / ${weeks.length}주 완료', style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 7),
           LinearProgressIndicator(value: completed / weeks.length, minHeight: 8,
-            borderRadius: BorderRadius.circular(8), backgroundColor: const Color(0xFFE4E0D9)),
+            borderRadius: BorderRadius.circular(8), backgroundColor: const Color(0xFFE6E0FF)),
         ])),
         Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-          leading: const CircleAvatar(backgroundColor: Color(0xFFEFEDE9),
-            child: Icon(Icons.insights_rounded, color: Color(0xFF2B2A28))),
+          leading: const CircleAvatar(backgroundColor: Color(0xFFF1EDFF),
+            child: Icon(Icons.insights_rounded, color: Color(0xFF7C5CFC))),
           title: const Text('학습 성장 기록', style: TextStyle(fontWeight: FontWeight.w700)),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.push(context, MaterialPageRoute(
@@ -539,20 +636,20 @@ class _StudyPageState extends State<StudyPage> {
             borderRadius: BorderRadius.circular(14),
             onTap: () => setState(() => selectedWeek = w['week_no']),
             child: Container(width: 92, padding: const EdgeInsets.symmetric(vertical: 9),
-              decoration: BoxDecoration(color: selected ? const Color(0xFF2B2A28) : const Color(0xFFEFEDE9),
+              decoration: BoxDecoration(color: selected ? const Color(0xFF7C5CFC) : const Color(0xFFF1EDFF),
                 borderRadius: BorderRadius.circular(14)),
               child: Column(children: [
                 Text('${w['week_no']}주차', style: TextStyle(fontWeight: FontWeight.w700,
-                  color: selected ? Colors.white : const Color(0xFF2F2D2A))),
+                  color: selected ? Colors.white : const Color(0xFF191A1C))),
                 const SizedBox(height: 3),
                 Text(weekStatusLabel(w['status']), style: TextStyle(fontSize: 11,
-                  color: selected ? Colors.white70 : const Color(0xFF8A857E))),
+                  color: selected ? Colors.white70 : const Color(0xFF8B8F97))),
               ]))));
         }).toList())),
         if (current != null) SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const CircleAvatar(backgroundColor: Color(0xFFEFEDE9),
-              child: Icon(Icons.menu_book_rounded, color: Color(0xFF2B2A28))),
+            const CircleAvatar(backgroundColor: Color(0xFFF1EDFF),
+              child: Icon(Icons.menu_book_rounded, color: Color(0xFF7C5CFC))),
             const SizedBox(width: 12),
             Expanded(child: Text('${current['title']}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
           ]),
@@ -570,7 +667,7 @@ class _StudyPageState extends State<StudyPage> {
               style: const TextStyle(color: Color(0xFFB15E38))),
           ],
           const SizedBox(height: 10), Text('함께 이야기하는 날 · ${current['meeting_date']}',
-            style: const TextStyle(color: Color(0xFF6F6A63), fontSize: 12)),
+            style: const TextStyle(color: Color(0xFF8B8F97), fontSize: 12)),
           if ((current['review'] as List).isNotEmpty) ...[
             const SizedBox(height: 14),
             Container(width: double.infinity, padding: const EdgeInsets.all(12),
@@ -594,8 +691,8 @@ class _StudyPageState extends State<StudyPage> {
         SectionTitle('기록', detail: '${minutes.length}개'),
         if (minutes.isEmpty) const SoftPanel(child: Text('아직 기록이 없어요.')),
         ...minutes.map((m) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-          leading: const CircleAvatar(backgroundColor: Color(0xFFEFEDE9),
-            child: Icon(Icons.description_outlined, color: Color(0xFF2B2A28))),
+          leading: const CircleAvatar(backgroundColor: Color(0xFFF1EDFF),
+            child: Icon(Icons.description_outlined, color: Color(0xFF7C5CFC))),
           title: Text('${m['week_no']}주차 이야기 기록', style: const TextStyle(fontWeight: FontWeight.w700)),
           subtitle: Text('${m['minutes']['summary']}', maxLines: 2, overflow: TextOverflow.ellipsis),
           trailing: const Icon(Icons.chevron_right),
@@ -632,9 +729,9 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
     finally { if (mounted) setState(() => busy = false); }
   }
   Widget stat(int value, String label, IconData icon) => Expanded(child: SoftPanel(
-    child: Column(children: [Icon(icon, color: const Color(0xFF2B2A28), size: 20),
+    child: Column(children: [Icon(icon, color: const Color(0xFF7C5CFC), size: 20),
       const SizedBox(height: 6), Text('$value', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-      Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF6F6A63))),
+      Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF8B8F97))),
     ])));
   Widget noteBlock(String label, String value, Color color) => Container(
     width: double.infinity, padding: const EdgeInsets.all(14),
@@ -651,7 +748,7 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
     final weeks = (data?['weeks'] as List?) ?? [];
     return Scaffold(appBar: AppBar(title: const Text('학습 성장 기록')),
       body: data == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
-        SoftPanel(color: const Color(0xFFF0EEEA), child: Column(
+        SoftPanel(color: const Color(0xFFF6F4FF), child: Column(
           crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${data['title']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 5), Text('${data['goal']}'),
@@ -683,18 +780,18 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
               style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
             const SizedBox(height: 5),
             Text('질문 ${week['question_count']}개 · 답변 ${week['answer_count']}개',
-              style: const TextStyle(color: Color(0xFF6F6A63), fontSize: 12)),
+              style: const TextStyle(color: Color(0xFF8B8F97), fontSize: 12)),
             const SizedBox(height: 14),
             LayoutBuilder(builder: (context, constraints) => constraints.maxWidth >= 460
               ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Expanded(child: noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF3F2EF))),
+                  Expanded(child: noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF6F7F9))),
                   const SizedBox(width: 10),
-                  Expanded(child: noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEDF0EA))),
+                  Expanded(child: noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEFFAF5))),
                 ])
               : Column(children: [
-                  noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF3F2EF)),
+                  noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF6F7F9)),
                   const SizedBox(height: 10),
-                  noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEDF0EA)),
+                  noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEFFAF5)),
                 ])),
             if ('${week['summary']}'.isNotEmpty) ...[
               const SizedBox(height: 14), Text('스터디 기록 · ${week['summary']}',
@@ -769,7 +866,7 @@ class _WeekPageState extends State<WeekPage> {
             hintText: '예: 3장 실습, 검증 데이터 개념')),
       ])),
       const SizedBox(height: 12),
-      SoftPanel(color: const Color(0xFFF3F2EF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SoftPanel(color: const Color(0xFFF6F7F9), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.event_outlined),
           title: Text('함께 이야기하는 날 · ${meetingDate.year}-${meetingDate.month}-${meetingDate.day}'),
           trailing: const Icon(Icons.edit_calendar_outlined),
@@ -804,9 +901,8 @@ class _WeekPageState extends State<WeekPage> {
 class SessionPage extends StatefulWidget {
   final int id;
   final String? studyTitle;
-  final VoidCallback? onMenu;
   final Future<void> Function()? onFinished;
-  const SessionPage({super.key, required this.id, this.studyTitle, this.onMenu, this.onFinished});
+  const SessionPage({super.key, required this.id, this.studyTitle, this.onFinished});
   @override State<SessionPage> createState() => _SessionPageState();
 }
 class _SessionPageState extends State<SessionPage> {
@@ -817,6 +913,8 @@ class _SessionPageState extends State<SessionPage> {
   final answerFocus = FocusNode();
   bool needsReview = false, busy = false;
   String? busyAction, pendingText;
+  bool infoOpen = true;
+  final sessionScaffoldKey = GlobalKey<ScaffoldState>();
   /// 채팅방 모드에서는 지난 주차 대화까지 한 화면에 이어서 보여준다.
   bool get continuous => widget.onFinished != null;
   @override void initState() { super.initState(); refresh(withHistory: true); }
@@ -934,44 +1032,6 @@ class _SessionPageState extends State<SessionPage> {
       await refresh();
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
-  Future<void> showWeekInfo() async {
-    final s = session;
-    if (s == null) return;
-    final week = s['week'] as Map<String, dynamic>;
-    final review = (week['review'] as List?) ?? [];
-    final finished = s['status'] != 'active';
-    await showAdaptiveSheet(context, (sheetContext) => Column(
-      mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${s['week_no']}주차 · ${week['title']}', style: Theme.of(sheetContext).textTheme.titleMedium
-          ?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        Text('${week['scope']}', style: const TextStyle(height: 1.5)),
-        if ((s['pdf_name'] as String).isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Row(children: [const Icon(Icons.picture_as_pdf_outlined, size: 16, color: mutedInk), const SizedBox(width: 6),
-            Expanded(child: Text('${s['pdf_name']} · ${s['page_count']}쪽',
-              style: const TextStyle(fontSize: 13, color: mutedInk)))]),
-        ],
-        if (review.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          const Text('복습', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          ...review.map((r) => Text('• $r', style: const TextStyle(height: 1.5))),
-        ],
-        if (s['week_no'] > 1 && !finished) SwitchListTile(contentPadding: EdgeInsets.zero,
-          title: const Text('지난 주차 내용도 질문받기'),
-          value: week['include_previous_questions'] != 0,
-          onChanged: (v) { Navigator.pop(sheetContext); togglePrevious(v); }),
-        const SizedBox(height: 8),
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          OutlinedButton.icon(onPressed: () { Navigator.pop(sheetContext); showLearningJourney(); },
-            icon: const Icon(Icons.insights_outlined, size: 18), label: const Text('복습·성장 기록')),
-          OutlinedButton.icon(onPressed: busy ? null : () { Navigator.pop(sheetContext); attachPdf(); },
-            icon: const Icon(Icons.attach_file_rounded, size: 18),
-            label: Text((s['pdf_name'] as String).isEmpty ? '교안 추가' : '교안 교체')),
-        ]),
-      ]));
-  }
   Future<void> finish() async {
     final s = session!;
     final hasNext = (s['week_no'] as int) < (s['total_weeks'] as int);
@@ -991,64 +1051,200 @@ class _SessionPageState extends State<SessionPage> {
   }
 
   Widget weekDivider(Map<String, dynamic> s) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 18),
-    child: Row(children: [
-      const Expanded(child: Divider()),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text(
-        '${s['week_no']}주차 · ${(s['week'] as Map)['title']}',
-        style: const TextStyle(fontSize: 12, color: mutedInk, fontWeight: FontWeight.w600))),
-      const Expanded(child: Divider()),
-    ]));
+    padding: const EdgeInsets.only(top: 22, bottom: 6),
+    child: Center(child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(color: const Color(0xFFE6E8EC), borderRadius: BorderRadius.circular(20)),
+      child: Text('${s['week_no']}주차 · ${(s['week'] as Map)['title']}',
+        style: const TextStyle(fontSize: 12, color: Color(0xFF5B5F68), fontWeight: FontWeight.w600)))));
   Widget summaryCard(Map<String, dynamic> s) {
     final raw = s['minutes'] as String? ?? '';
     final minutes = raw.isEmpty ? <String, dynamic>{} : jsonDecode(raw) as Map<String, dynamic>;
     final checks = (minutes['next_checks'] as List?) ?? [];
-    return Container(margin: const EdgeInsets.symmetric(vertical: 10), padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: lineColor)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [const Icon(Icons.description_outlined, size: 18), const SizedBox(width: 6),
-          Text('${s['week_no']}주차 정리', style: const TextStyle(fontWeight: FontWeight.w700))]),
-        const SizedBox(height: 8),
-        Text('${minutes['summary'] ?? ''}', style: const TextStyle(height: 1.5)),
-        if (checks.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Text(checks.map((x) => '• $x').join('\n'), style: const TextStyle(color: mutedInk, height: 1.5)),
-        ],
-      ]));
+    return Center(child: Container(margin: const EdgeInsets.only(top: 16), constraints: const BoxConstraints(maxWidth: 520),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18),
+        boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2))]),
+      clipBehavior: Clip.antiAlias,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(color: brandSoft, padding: const EdgeInsets.fromLTRB(16, 12, 16, 12), child: Row(children: [
+          const Icon(Icons.auto_awesome_rounded, size: 18, color: brand), const SizedBox(width: 8),
+          Text('${s['week_no']}주차 스터디 정리', style: const TextStyle(fontWeight: FontWeight.w700, color: ink)),
+        ])),
+        Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${minutes['summary'] ?? ''}', style: const TextStyle(height: 1.55, color: ink)),
+          if (checks.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('다음에 다시 볼 것', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: mutedInk)),
+            ...checks.map((x) => Padding(padding: const EdgeInsets.only(top: 6), child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Padding(padding: EdgeInsets.only(top: 3), child: Icon(Icons.bookmark_rounded, size: 14, color: brand)),
+                const SizedBox(width: 6),
+                Expanded(child: Text('$x', style: const TextStyle(height: 1.45, fontSize: 13.5))),
+              ]))),
+          ],
+        ])),
+      ])));
   }
   List<Widget> sessionBlock(Map<String, dynamic> s) {
     final messages = (s['messages'] as List?) ?? [];
     final finished = s['status'] != 'active';
     final sid = s['id'] as int;
-    return [
-      weekDivider(s),
-      if ((s['initial_note'] as String? ?? '').isNotEmpty) ChatBubble(name: '나', text: s['initial_note'], mine: true),
-      ...messages.map((m) {
-        final mine = m['role'] == 'user';
-        final peer = mine ? null : m['member_no'] as int?;
-        return ChatBubble(
-          name: mine ? '나' : m['role'] == 'assistant_hint' ? '${peerLabel(peer ?? 1)} · 힌트'
-            : m['role'] == 'assistant_plan' ? '${peerLabel(peer ?? 1)} · 계획 반영' : peerLabel(peer ?? 1),
-          text: '${m['body']}', mine: mine, peerNo: peer,
-          caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽',
-          onCaptionTap: m['page_no'] == null ? null : () => showSource(sid, m['id'] as int));
-      }),
-      if (finished) ...[
-        if ((s['revised_note'] as String? ?? '').isNotEmpty) ChatBubble(name: '나', text: s['revised_note'], mine: true),
-        summaryCard(s),
-      ],
-    ];
+    final out = <Widget>[weekDivider(s)];
+    String? lastSpeaker;
+    void add(String speaker, Widget Function(bool grouped) build) {
+      out.add(build(lastSpeaker == speaker));
+      lastSpeaker = speaker;
+    }
+    if ((s['initial_note'] as String? ?? '').isNotEmpty) {
+      add('me', (g) => ChatBubble(name: '나', text: s['initial_note'], mine: true, grouped: g));
+    }
+    for (final m in messages) {
+      final mine = m['role'] == 'user';
+      final peer = mine ? null : m['member_no'] as int?;
+      final tag = m['role'] == 'assistant_hint' ? ' · 힌트' : m['role'] == 'assistant_plan' ? ' · 계획 반영' : '';
+      add(mine ? 'me' : 'peer$peer$tag', (g) => ChatBubble(
+        name: mine ? '나' : '${peerLabel(peer ?? 1)}$tag',
+        text: '${m['body']}', mine: mine, peerNo: peer, grouped: g,
+        caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽',
+        onCaptionTap: m['page_no'] == null ? null : () => showSource(sid, m['id'] as int)));
+    }
+    if (finished) {
+      if ((s['revised_note'] as String? ?? '').isNotEmpty) {
+        add('me', (g) => ChatBubble(name: '나', text: s['revised_note'], mine: true, grouped: g));
+      }
+      out.add(summaryCard(s));
+    }
+    return out;
   }
   Widget typingBubble() {
     final messages = (session?['messages'] as List?) ?? [];
     final peer = messages.isEmpty ? 1 : (messages.last['member_no'] as int? ?? 1);
     return Align(alignment: Alignment.centerLeft, child: Padding(
-      padding: const EdgeInsets.fromLTRB(44, 6, 0, 6),
-      child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(color: peerTint(peer), borderRadius: BorderRadius.circular(16)),
-        child: const SizedBox(width: 28, height: 14, child: LinearProgressIndicator(
-          minHeight: 3, backgroundColor: Colors.transparent, color: mutedInk)))));
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        PeerAvatar(peer), const SizedBox(width: 8),
+        Container(padding: const EdgeInsets.all(14),
+          decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.all(Radius.circular(18)),
+            boxShadow: [BoxShadow(color: Color(0x0F000000), blurRadius: 3, offset: Offset(0, 1))]),
+          child: const TypingDots()),
+      ])));
+  }
+  Widget memberStack(List members) {
+    final shown = members.take(3).toList();
+    return SizedBox(width: 22.0 * shown.length + 14, height: 36, child: Stack(children: [
+      for (var i = 0; i < shown.length; i++) Positioned(left: 22.0 * i, top: 0, child: Container(
+        padding: const EdgeInsets.all(2), decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+        child: PeerAvatar(shown[i]['member_no'] as int, size: 32))),
+    ]));
+  }
+  Widget infoSection(String title, List<Widget> children) => Padding(
+    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: mutedInk)),
+      const SizedBox(height: 10),
+      ...children,
+    ]));
+  /// 오른쪽에서 여는 채팅방 정보: 이번 주 계획, 스터디원, 교안, 복습, 설정.
+  Widget roomInfoPanel({required bool asDrawer}) {
+    final s = session!;
+    final week = s['week'] as Map<String, dynamic>;
+    final review = (week['review'] as List?) ?? [];
+    final members = (s['members'] as List?) ?? [];
+    final finished = s['status'] != 'active';
+    final hasPdf = (s['pdf_name'] as String).isNotEmpty;
+    void close() { if (asDrawer) Navigator.of(context).maybePop(); }
+    return Material(color: Colors.white, child: SafeArea(child: Column(children: [
+      Container(height: 56, padding: const EdgeInsets.only(left: 20, right: 8),
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: lineColor))),
+        child: Row(children: [
+          const Expanded(child: Text('채팅방 정보', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
+          IconButton(tooltip: '닫기', icon: const Icon(Icons.close_rounded),
+            onPressed: asDrawer ? close : () => setState(() => infoOpen = false)),
+        ])),
+      Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+        infoSection('이번 주', [
+          Row(children: [
+            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(8)),
+              child: Text('${s['week_no']}/${s['total_weeks']}주차',
+                style: const TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w700))),
+            const SizedBox(width: 8),
+            Expanded(child: Text('${week['title']}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
+          ]),
+          const SizedBox(height: 8),
+          Text('${week['scope']}', style: const TextStyle(height: 1.5, color: Color(0xFF3A3D44))),
+          const SizedBox(height: 10),
+          Row(children: [
+            const Icon(Icons.event_outlined, size: 16, color: mutedInk), const SizedBox(width: 6),
+            Text('모임 ${week['meeting_date']}', style: const TextStyle(fontSize: 13, color: mutedInk)),
+          ]),
+        ]),
+        infoSection('스터디원 ${members.length + 1}', [
+          for (final m in members) Padding(padding: const EdgeInsets.only(bottom: 12), child: Row(children: [
+            PeerAvatar(m['member_no'] as int, size: 38), const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(peerLabel(m['member_no'] as int), style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text('${m['perspective']} · ${m['level']}', style: const TextStyle(fontSize: 12.5, color: mutedInk)),
+            ])),
+          ])),
+          Row(children: [
+            Container(width: 38, height: 38, alignment: Alignment.center,
+              decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
+              child: const Text('나', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700))),
+            const SizedBox(width: 12),
+            const Text('나', style: TextStyle(fontWeight: FontWeight.w600)),
+          ]),
+        ]),
+        infoSection('교안', [
+          InkWell(onTap: busy ? null : () { close(); attachPdf(); }, borderRadius: BorderRadius.circular(12),
+            child: Container(padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(border: Border.all(color: lineColor), borderRadius: BorderRadius.circular(12)),
+              child: Row(children: [
+                Icon(hasPdf ? Icons.picture_as_pdf_rounded : Icons.upload_file_rounded,
+                  color: hasPdf ? const Color(0xFFE03131) : mutedInk),
+                const SizedBox(width: 10),
+                Expanded(child: Text(hasPdf ? '${s['pdf_name']} · ${s['page_count']}쪽' : 'PDF 교안 추가',
+                  maxLines: 1, overflow: TextOverflow.ellipsis)),
+                Text(hasPdf ? '교체' : '추가', style: const TextStyle(color: brand, fontWeight: FontWeight.w600, fontSize: 13)),
+              ]))),
+        ]),
+        if (review.isNotEmpty) infoSection('복습할 내용', [
+          ...review.map((r) => Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Padding(padding: EdgeInsets.only(top: 3), child: Icon(Icons.bookmark_rounded, size: 14, color: brand)),
+              const SizedBox(width: 6),
+              Expanded(child: Text('$r', style: const TextStyle(height: 1.45, fontSize: 13.5))),
+            ]))),
+        ]),
+        infoSection('설정', [
+          if (s['week_no'] > 1 && !finished) SwitchListTile(contentPadding: EdgeInsets.zero, dense: true,
+            title: const Text('지난 주차 내용도 질문받기', style: TextStyle(fontSize: 14)),
+            value: week['include_previous_questions'] != 0,
+            onChanged: busy ? null : togglePrevious),
+          ListTile(contentPadding: EdgeInsets.zero, dense: true,
+            leading: const Icon(Icons.insights_rounded, color: brand),
+            title: const Text('복습·성장 기록', style: TextStyle(fontSize: 14)),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () { close(); showLearningJourney(); }),
+          ListTile(contentPadding: EdgeInsets.zero, dense: true,
+            leading: const Icon(Icons.calendar_month_outlined, color: brand),
+            title: const Text('전체 계획·일정', style: TextStyle(fontSize: 14)),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () async {
+              close();
+              await Navigator.push(context, MaterialPageRoute(builder: (_) => StudyPage(id: s['study_id'] as int)));
+              if (mounted) refresh();
+            }),
+        ]),
+      ])),
+    ])));
+  }
+  void openInfo(bool wide) {
+    if (wide) {
+      setState(() => infoOpen = !infoOpen);
+    } else {
+      sessionScaffoldKey.currentState?.openEndDrawer();
+    }
   }
   KeyEventResult onAnswerKey(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter
@@ -1081,15 +1277,25 @@ class _SessionPageState extends State<SessionPage> {
           onPressed: busy || messages.isEmpty ? null : finish),
       ])),
       const SizedBox(height: 8),
-      Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(child: Focus(onKeyEvent: onAnswerKey, child: TextField(controller: answer, focusNode: answerFocus,
-          minLines: 1, maxLines: 5, keyboardType: TextInputType.multiline,
-          decoration: const InputDecoration(hintText: '답하기, 질문, 일정·계획 변경도 여기에')))),
-        const SizedBox(width: 8),
-        IconButton.filled(onPressed: busy ? null : sendAnswer,
-          style: IconButton.styleFrom(minimumSize: const Size(50, 50)),
-          icon: const Icon(Icons.arrow_upward_rounded), tooltip: '보내기'),
-      ]),
+      Container(
+        padding: const EdgeInsets.fromLTRB(16, 4, 5, 4),
+        decoration: BoxDecoration(color: const Color(0xFFF4F5F7), borderRadius: BorderRadius.circular(26)),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Expanded(child: Focus(onKeyEvent: onAnswerKey, child: TextField(controller: answer, focusNode: answerFocus,
+            minLines: 1, maxLines: 5, keyboardType: TextInputType.multiline,
+            onChanged: (_) => setState(() {}),
+            style: const TextStyle(fontSize: 15),
+            decoration: const InputDecoration(hintText: '메시지 보내기', filled: false, isDense: true,
+              contentPadding: EdgeInsets.symmetric(vertical: 12),
+              border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none)))),
+          const SizedBox(width: 6),
+          Padding(padding: const EdgeInsets.only(bottom: 2), child: IconButton.filled(
+            onPressed: busy || answer.text.trim().isEmpty ? null : sendAnswer,
+            style: IconButton.styleFrom(backgroundColor: brand, foregroundColor: Colors.white,
+              disabledBackgroundColor: const Color(0xFFD9DBE0), disabledForegroundColor: Colors.white,
+              minimumSize: const Size(40, 40)),
+            icon: const Icon(Icons.arrow_upward_rounded, size: 20), tooltip: '보내기')),
+        ])),
     ]);
   }
   @override Widget build(BuildContext context) {
@@ -1101,24 +1307,7 @@ class _SessionPageState extends State<SessionPage> {
     final thinking = busyAction == 'question' || busyAction == 'answer' || busyAction == 'explain'
       || (s != null && !finished && messages.isEmpty);
     final wide = MediaQuery.sizeOf(context).width >= wideBreakpoint;
-    return Scaffold(
-      appBar: AppBar(
-        leading: widget.onMenu == null ? null : IconButton(
-          tooltip: '채팅방 목록', icon: const Icon(Icons.menu), onPressed: widget.onMenu),
-        actions: [
-          IconButton(tooltip: '이번 주 정보', onPressed: s == null ? null : showWeekInfo,
-            icon: const Icon(Icons.info_outline_rounded)),
-          const SizedBox(width: 6),
-        ],
-        title: InkWell(onTap: s == null ? null : showWeekInfo, child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(widget.studyTitle ?? '${s?['week_no'] ?? ''}주차', maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-          if (s != null) Text('${s['week_no']}/${s['total_weeks']}주차 · ${(s['week'] as Map)['title']}',
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: mutedInk)),
-        ]))),
-      body: s == null ? const Center(child: CircularProgressIndicator()) : Column(children: [
+    final chat = s == null ? const Center(child: CircularProgressIndicator()) : Column(children: [
         Expanded(child: ListView(controller: scrollController,
           padding: EdgeInsets.symmetric(horizontal: wide ? 24 : 14, vertical: 8), children: [
           Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: chatMaxWidth),
@@ -1127,7 +1316,7 @@ class _SessionPageState extends State<SessionPage> {
               ...sessionBlock(s),
               if (pendingText != null) ChatBubble(name: '나', text: pendingText!, mine: true),
               if (thinking) typingBubble(),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
             ]))),
         ])),
         Container(
@@ -1136,14 +1325,42 @@ class _SessionPageState extends State<SessionPage> {
             constraints: const BoxConstraints(maxWidth: chatMaxWidth),
             child: Padding(padding: EdgeInsets.fromLTRB(wide ? 24 : 12, 10, wide ? 24 : 12, 10),
               child: composer(s, messages, awaiting, finished)))))),
+      ]);
+    final sideOpen = wide && infoOpen && s != null;
+    return Scaffold(key: sessionScaffoldKey,
+      backgroundColor: const Color(0xFFF4F5F7),
+      endDrawer: !wide && s != null ? Drawer(width: 320, backgroundColor: Colors.white,
+        child: roomInfoPanel(asDrawer: true)) : null,
+      appBar: AppBar(
+        actions: [
+          IconButton(tooltip: '채팅방 정보', onPressed: s == null ? null : () => openInfo(wide),
+            isSelected: sideOpen, selectedIcon: const Icon(Icons.view_sidebar_rounded, color: brand),
+            icon: const Icon(Icons.view_sidebar_outlined)),
+          const SizedBox(width: 6),
+        ],
+        title: InkWell(onTap: s == null ? null : () => openInfo(wide), child: Row(children: [
+          if (s != null) ...[memberStack((s['members'] as List?) ?? []), const SizedBox(width: 10)],
+          Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(widget.studyTitle ?? '${s?['week_no'] ?? ''}주차', maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+          if (s != null) Text('${s['week_no']}/${s['total_weeks']}주차 · ${(s['week'] as Map)['title']}',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: mutedInk)),
+        ]))]))),
+      body: Row(children: [
+        Expanded(child: chat),
+        if (sideOpen) Container(width: 320,
+          decoration: const BoxDecoration(border: Border(left: BorderSide(color: lineColor))),
+          child: roomInfoPanel(asDrawer: false)),
       ]));
   }
 }
 
 const wideBreakpoint = 900.0;
 const chatMaxWidth = 760.0;
-const mutedInk = Color(0xFF6F6A63);
-const lineColor = Color(0xFFE8E5DF);
+const mutedInk = Color(0xFF8B8F97);
+const lineColor = Color(0xFFE9EAEE);
 
 /// 휴대폰에서는 아래에서 올라오는 시트, 넓은 화면에서는 가운데 대화상자로 연다.
 Future<T?> showAdaptiveSheet<T>(BuildContext context, WidgetBuilder builder) {
@@ -1161,4 +1378,21 @@ Future<T?> showAdaptiveSheet<T>(BuildContext context, WidgetBuilder builder) {
       padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.viewInsetsOf(sheetContext).bottom + 24),
       child: ConstrainedBox(constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.75),
         child: builder(sheetContext))));
+}
+
+class TypingDots extends StatefulWidget {
+  const TypingDots({super.key});
+  @override State<TypingDots> createState() => _TypingDotsState();
+}
+class _TypingDotsState extends State<TypingDots> with SingleTickerProviderStateMixin {
+  late final controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+  @override void dispose() { controller.dispose(); super.dispose(); }
+  @override Widget build(BuildContext context) => AnimatedBuilder(animation: controller, builder: (context, child) =>
+    Row(mainAxisSize: MainAxisSize.min, children: List.generate(3, (i) {
+      final t = ((controller.value * 3) - i).clamp(0.0, 1.0);
+      final lift = t < 0.5 ? t * 2 : (1 - t) * 2;
+      return Padding(padding: const EdgeInsets.symmetric(horizontal: 2), child: Transform.translate(
+        offset: Offset(0, -3 * lift), child: Container(width: 7, height: 7, decoration: BoxDecoration(
+          shape: BoxShape.circle, color: Color.lerp(const Color(0xFFC4C7CE), mutedInk, lift)))));
+    })));
 }
