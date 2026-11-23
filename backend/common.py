@@ -1,5 +1,6 @@
 """여러 라우터가 함께 쓰는 상수와 DB 조회 도우미."""
 import io
+import json
 import math
 import re
 from fastapi import HTTPException, UploadFile
@@ -102,11 +103,26 @@ def with_persona(member: dict) -> dict:
 # 모든 스터디원 프롬프트에 붙는 공통 규칙
 PEER_RULES = (
     "당신은 사용자와 함께 공부하는 AI 스터디원들의 발언을 만듭니다. members의 각 동료는 name, level, persona"
-    "(role, focus, style, level_guide)를 가집니다. 말하는 동료는 자기 persona의 focus와 style, level_guide를 지키세요. "
+    "(role, focus, style, level_guide)를 가집니다. 말하는 동료는 자기 이름으로 말하고, persona의 focus와 style, "
+    "level_guide를 지키세요. "
+    "user_preferences는 사용자가 채팅으로 직접 요청한 진행 방식입니다. 다른 규칙과 부딪히면 user_preferences를 가장 먼저 따르세요"
+    "(예: '편한 반말로 말하기'면 존댓말 대신 반말, '짧고 간단하게 말하기'면 한두 문장). "
+    "사용자가 방금 한 말(last_user_message)에 질문·감정(어렵다, 지겹다, 재밌다)·요청이 담겨 있으면 그것에 먼저 짧게 반응한 뒤 이어 가세요. "
+    "사용자가 어려워하면 같은 질문을 반복하지 말고 더 작은 단계로 쪼개거나 예를 들어 주세요. "
     "모든 발언은 study_goal(또는 goal)과 이번 주차 week의 title·scope 주제 안에서만 하고, 주제와 무관한 잡담이나 "
-    "교안·대화에 없는 사실을 지어내지 마세요. 실제 친구처럼 짧고 자연스러운 한국어 존댓말을 쓰고, "
+    "교안·대화에 없는 사실을 지어내지 마세요. 실제 친구처럼 짧고 자연스러운 한국어를 쓰고(기본은 존댓말), "
     "선생님이나 시험 문제 같은 말투, 매번 같은 칭찬, 이모지 남발을 피하세요. "
 )
+
+
+def peer_context(study: dict, messages: list) -> dict:
+    """모든 스터디원 프롬프트에 함께 넣는 사용자 맥락: 요청한 진행 방식과 방금 한 말."""
+    try:
+        prefs = json.loads(study.get("preferences") or "[]")
+    except ValueError:
+        prefs = []
+    last = next((m["body"] for m in reversed(messages) if m["role"] == "user"), "")
+    return {"user_preferences": prefs if isinstance(prefs, list) else [], "last_user_message": last}
 
 
 def required(db, sql, args=()):
@@ -167,6 +183,8 @@ def session_data(db, session_id):
     session["unanswered"] = loads(session["unanswered"])
     session["messages"] = [dict(r) for r in db.execute(
         "SELECT * FROM messages WHERE session_id=? ORDER BY id", (session_id,))]
+    prefs = db.execute("SELECT preferences FROM studies WHERE id=?", (session["study_id"],)).fetchone()
+    session["preferences"] = loads(prefs["preferences"] if prefs else "[]")
     session["members"] = [with_persona(dict(r)) for r in db.execute(
         "SELECT * FROM members WHERE study_id=? ORDER BY member_no", (session["study_id"],))]
     return session

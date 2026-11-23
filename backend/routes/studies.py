@@ -167,6 +167,19 @@ async def create_study(
         return study_data(db, study_id)
 
 
+class Preferences(BaseModel):
+    items: list[str] = Field(max_length=6)
+
+
+@router.put("/studies/{study_id}/preferences")
+def edit_preferences(study_id: int, body: Preferences):
+    """채팅으로 정한 진행 방식을 채팅방 정보에서 지우거나 정리한다."""
+    items = list(dict.fromkeys(x.strip()[:60] for x in body.items if x.strip()))
+    with connect() as db:
+        db.execute("UPDATE studies SET preferences=? WHERE id=?", (json.dumps(items, ensure_ascii=False), study_id))
+        return study_data(db, study_id)
+
+
 class MemberEdit(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=12)
     level: str | None = None

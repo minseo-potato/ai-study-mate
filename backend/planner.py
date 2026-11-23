@@ -1,12 +1,37 @@
-"""채팅 메시지로 들어온 스터디 운영 요청(일정 변경, 주제 변경 등)을 해석하고 적용한다."""
+"""채팅 메시지로 들어온 스터디 운영 요청을 해석하고 적용한다.
+
+일정·주제·기간 같은 계획 변경뿐 아니라, 난이도·말투·질문 방식처럼 대화를 어떻게 이어 갈지에 대한 요청도
+여기서 알아듣고 바로 반영한다. 반영한 진행 방식은 studies.preferences에 남아 모든 프롬프트에 함께 들어간다.
+"""
+import json
 import re
 from datetime import date, timedelta
 
 from ai import demo_mode, generate_json
 
 KEYWORDS = ("미루", "연기", "늦추", "당기", "앞당", "바꾸", "바꿔", "변경", "일정", "계획",
-            "주당", "시간", "주 더", "주 추가", "주 늘", "다시 짜", "재조정")
-INTENTS = {"reschedule", "set_date", "change_week", "hours", "add_weeks", "replan"}
+            "주당", "시간", "주 더", "주 추가", "주 늘", "다시 짜", "재조정",
+            "쉽게", "쉬운", "어려", "어렵게", "깊게", "난이도", "수준", "기초", "중급", "심화",
+            "위주", "짧게", "간단히", "자세히", "자세하게", "천천히", "하나씩", "반말", "존댓말", "편하게",
+            "정답", "퀴즈", "문제", "지난 주", "지난주", "이전 주", "그만", "원래대로", "초기화", "이름")
+INTENTS = {"reschedule", "set_date", "change_week", "hours", "add_weeks", "replan",
+           "previous_questions", "member_level", "all_levels", "style", "style_reset", "rename_room"}
+LEVELS = ["기초", "중급", "심화"]
+# 요청에 쓰이는 말끝. 답변 속 단어("예시를 들면")를 요청으로 오해하지 않도록 함께 확인한다.
+REQUEST = r"(해\s*줘|해\s*주세요|해\s*줄래|해\s*줄\s*수|하자|해요|해라|주면|줘요|줘|말해|물어\s*봐|물어\s*줘|부탁|좋겠|싶어|바꿔|해봐|해\s*봐)"
+# 사용자가 말로 정할 수 있는 진행 방식. (찾을 말, 저장할 문장, 함께 둘 수 없는 반대 문장)
+STYLES = [
+    (r"(예시|사례|예를).{0,8}(위주|많이|들어|중심)", "예시를 많이 들어 가며 이야기하기", None),
+    (r"(짧게|간단히|간단하게|짧은)", "짧고 간단하게 말하기", "자세하게 설명하기"),
+    (r"(자세히|자세하게|길게|구체적으로)", "자세하게 설명하기", "짧고 간단하게 말하기"),
+    (r"(천천히|하나씩|한\s*번에\s*하나)", "한 번에 하나씩 천천히 묻기", None),
+    (r"(반말|편하게\s*말)", "편한 반말로 말하기", "존댓말로 말하기"),
+    (r"존댓말", "존댓말로 말하기", "편한 반말로 말하기"),
+    (r"(정답|답).{0,6}(먼저|알려|가르쳐)", "모르는 부분은 답을 먼저 알려 주고 확인하기", None),
+    (r"(퀴즈|문제).{0,6}(내|형식|처럼)", "짧은 퀴즈 형식으로 묻기", None),
+    (r"(칭찬|격려).{0,6}(많이|해)", "잘한 점을 자주 짚어 주기", None),
+    (r"(교안|PDF|pdf).{0,8}(위주|중심|기준)", "교안 내용을 기준으로 이야기하기", None),
+]
 
 
 def _days(text: str) -> int:
@@ -28,7 +53,17 @@ def _target_week(text: str, week_no: int, total: int) -> int:
     return week_no
 
 
-def parse_rules(text: str, week_no: int, total: int) -> dict | None:
+def _level_request(t: str) -> tuple[str | None, int]:
+    """'심화로', '쉽게' 같은 말에서 (정확한 단계, 오르내림)을 뽑는다."""
+    exact = next((lv for lv in LEVELS if lv in t), None)
+    if re.search(r"(쉽게|쉬운|쉽고|낮춰|내려|어려워|어렵다|버거)", t):
+        return exact, -1
+    if re.search(r"(어렵게|깊게|높여|올려|도전|너무\s*쉬|쉬워)", t):
+        return exact, 1
+    return exact, 0
+
+
+def parse_rules(text: str, week_no: int, total: int, members: list | None = None) -> dict | None:
     """키 없이도 동작하는 규칙 기반 해석. 해당 없으면 None."""
     t = text.strip()
     if m := re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*(?:로|으로|에)", t):
@@ -45,6 +80,26 @@ def parse_rules(text: str, week_no: int, total: int) -> dict | None:
         return {"intent": "hours", "hours": float(m.group(1))}
     if re.search(r"(계획|일정).{0,8}(다시|새로|재조정)|다시\s*짜|재조정", t):
         return {"intent": "replan"}
+    if m := re.search(r"(?:채팅방|방|스터디)\s*이름.{0,6}?['\"“]?([^'\"”]{1,40}?)['\"”]?\s*(?:으로|로)\s*(?:바꿔|변경|하자|해)", t):
+        return {"intent": "rename_room", "title": m.group(1).strip()}
+    if re.search(r"(지난|이전|앞)\s*(주|주차|내용).{0,12}(그만|빼|말고|안\s*물|묻지\s*마|제외)", t):
+        return {"intent": "previous_questions", "on": False}
+    if re.search(r"(지난|이전|앞)\s*(주|주차|내용).{0,12}(다시|같이|도)\s*(물어|질문|복습|확인)", t):
+        return {"intent": "previous_questions", "on": True}
+    exact, direction = _level_request(t)
+    if exact or direction:
+        for member in members or []:
+            if member.get("name") and member["name"] in t:
+                return {"intent": "member_level", "member_no": member["member_no"],
+                        "level": exact, "direction": direction}
+        if re.search(r"(난이도|수준|다들|모두|전부|질문|설명|너무)", t) and (direction or re.search(REQUEST, t)):
+            return {"intent": "all_levels", "level": exact, "direction": direction}
+    if re.search(r"(원래대로|초기화|기본으로).{0,6}(해|돌려|하자|말)", t):
+        return {"intent": "style_reset"}
+    if re.search(REQUEST, t):
+        for pattern, label, _ in STYLES:
+            if re.search(pattern, t):
+                return {"intent": "style", "preference": label}
     m = re.search(r"(?:(\d+)\s*주차|다음\s*주|이번\s*주)\s*(?:는|에는|엔|은|에)?\s*(.+?)\s*(?:으로|로)\s*"
                   r"(?:바꾸|바꿔|변경|하자|해\s*줘|공부하)", t)
     if m and len(m.group(2)) >= 2:
@@ -53,25 +108,45 @@ def parse_rules(text: str, week_no: int, total: int) -> dict | None:
     return None
 
 
-async def parse(text: str, week_no: int, total: int, weeks: list) -> dict | None:
+async def parse(text: str, week_no: int, total: int, weeks: list, members: list | None = None) -> dict | None:
     if not any(k in text for k in KEYWORDS) and not re.search(r"\d+\s*월\s*\d+\s*일", text):
         return None
     if demo_mode():
-        return parse_rules(text, week_no, total)
+        return parse_rules(text, week_no, total, members)
     try:
         result = await generate_json(
-            "스터디 운영 요청 판별: 사용자의 채팅 메시지가 학습 내용에 대한 답변인지, 스터디 일정·계획을 바꾸려는 요청인지 판단하세요. "
-            "운영 요청이 아니면 intent를 none으로 두세요. JSON 키는 intent,week_no,days,month,day,title,scope,hours,add_weeks입니다. "
-            "intent는 none,reschedule(모임 날짜를 days만큼 이동, 음수는 앞당김),set_date(특정 날짜로 지정),"
-            "change_week(해당 주차의 제목과 학습 범위 변경),hours(주당 학습 시간 변경),add_weeks(기간 연장),replan(남은 계획 재조정) 중 하나입니다. "
-            "'다음 주'는 current_week+1, 언급이 없으면 current_week입니다.",
+            "스터디 운영 요청 판별: 사용자의 채팅 메시지가 학습 내용에 대한 답변·질문인지, 스터디 진행을 바꾸려는 요청인지 판단하세요. "
+            "학습 내용에 대한 말이면 intent를 none으로 두세요. 애매하면 none입니다. "
+            "JSON 키는 intent,week_no,days,month,day,title,scope,hours,add_weeks,on,member_no,level,direction,preference입니다. "
+            "intent는 다음 중 하나입니다. reschedule(모임 날짜를 days만큼 이동, 음수는 앞당김), set_date(특정 날짜로 지정), "
+            "change_week(해당 주차의 title·scope 변경), hours(주당 학습 시간), add_weeks(기간 연장), replan(남은 계획 재조정), "
+            "previous_questions(지난 주차 내용도 질문할지 on=true/false), "
+            "member_level(특정 스터디원 member_no의 난이도: level=기초/중급/심화 또는 direction=-1 쉽게/+1 어렵게), "
+            "all_levels(모든 스터디원 난이도를 level 또는 direction으로), "
+            "style(앞으로의 대화 방식 요청을 preference에 짧은 한 문장으로, 예: '예시를 많이 들어 가며 이야기하기'), "
+            "style_reset(요청했던 대화 방식을 모두 지우기), rename_room(채팅방 이름을 title로). "
+            "'다음 주'는 current_week+1, 언급이 없으면 current_week입니다. '너무 어려워요'처럼 난이도 불만도 all_levels(direction=-1)로 보세요.",
             {"message": text, "current_week": week_no, "total_weeks": total,
+             "members": [{"member_no": m["member_no"], "name": m["name"], "level": m["level"]} for m in members or []],
              "weeks": [{"week_no": w["week_no"], "title": w["title"], "meeting_date": w["meeting_date"]} for w in weeks]})
     except Exception:
-        return parse_rules(text, week_no, total)
+        return parse_rules(text, week_no, total, members)
     if result.get("intent") not in INTENTS:
         return None
     return result
+
+
+def load_preferences(raw) -> list:
+    try:
+        value = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return [str(x) for x in value if str(x).strip()] if isinstance(value, list) else []
+
+
+def _shift(level: str, direction: int) -> str:
+    i = LEVELS.index(level) if level in LEVELS else 1
+    return LEVELS[max(0, min(len(LEVELS) - 1, i + direction))]
 
 
 def _fmt(d: str) -> str:
@@ -155,4 +230,57 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
                 changed += 1
         lines = "\n".join(f"· {w['week_no']}주차 {w['title']}" for w in drafts if w.get("week_no") in valid)
         return f"남은 {changed}개 주차 계획을 다시 짰어요.\n{lines}" if changed else "지금 계획을 그대로 두는 게 좋겠어요."
+
+    if intent == "previous_questions":
+        on = bool(cmd.get("on"))
+        db.execute("UPDATE weeks SET include_previous_questions=? WHERE study_id=? AND week_no>=? AND status!='complete'",
+                   (int(on), sid, current_week))
+        return ("좋아요, 지난 주차 내용도 섞어서 같이 확인할게요." if on
+                else "알겠어요. 이제 이번 주 내용만 물어볼게요.")
+
+    members = study["members"]
+    if intent == "member_level":
+        member = next((m for m in members if m["member_no"] == cmd.get("member_no")), None)
+        if not member:
+            return "누구의 난이도를 바꿀지 이름으로 한 번만 더 알려 주세요."
+        level = cmd.get("level") if cmd.get("level") in LEVELS else _shift(member["level"], int(cmd.get("direction") or 0))
+        db.execute("UPDATE members SET level=? WHERE study_id=? AND member_no=?", (level, sid, member["member_no"]))
+        cmd["speaker_no"] = member["member_no"]  # 바뀐 당사자가 직접 대답한다
+        if level == member["level"]:
+            return f"지금도 {level} 단계로 이야기하고 있어요. 더 바꾸고 싶으면 말해 주세요!"
+        easier = LEVELS.index(level) < LEVELS.index(member["level"]) if member["level"] in LEVELS else False
+        return f"알겠어요! 이제 {level} 단계에 맞춰서 " + ("더 쉽게 풀어서 물어볼게요." if easier else "조금 더 깊게 물어볼게요.")
+
+    if intent == "all_levels":
+        changed = []
+        for member in members:
+            level = cmd.get("level") if cmd.get("level") in LEVELS else _shift(member["level"], int(cmd.get("direction") or 0))
+            if level != member["level"]:
+                db.execute("UPDATE members SET level=? WHERE study_id=? AND member_no=?", (level, sid, member["member_no"]))
+                changed.append(f"{member['name']} {level}")
+        if not changed:
+            return "지금 난이도가 이미 그 단계예요. 다른 방식으로 바꿔 볼까요?"
+        easier = int(cmd.get("direction") or 0) < 0 or cmd.get("level") == "기초"
+        return ("그럼 다 같이 한 단계 쉽게 가 볼게요. " if easier else "좋아요, 다 같이 한 단계 깊게 가 볼게요. ") + \
+            f"({', '.join(changed)})"
+
+    if intent in ("style", "style_reset"):
+        prefs = load_preferences(study.get("preferences"))
+        if intent == "style_reset":
+            db.execute("UPDATE studies SET preferences='[]' WHERE id=?", (sid,))
+            return "알겠어요. 요청했던 진행 방식을 모두 지우고 처음처럼 할게요." if prefs else "지금은 따로 정한 진행 방식이 없어요."
+        label = str(cmd.get("preference") or "").strip()[:60]
+        if not label:
+            return "어떤 방식으로 진행하면 좋을지 한 번만 더 알려 주세요."
+        opposite = next((o for _, l, o in STYLES if l == label), None)
+        prefs = [x for x in prefs if x not in (label, opposite)] + [label]
+        db.execute("UPDATE studies SET preferences=? WHERE id=?", (json.dumps(prefs[-6:], ensure_ascii=False), sid))
+        return f"좋아요! 앞으로는 '{label}'로 할게요. 다른 친구들도 같이 맞출게요."
+
+    if intent == "rename_room":
+        title = str(cmd.get("title") or "").strip()[:120]
+        if not title:
+            return "어떤 이름으로 바꿀지 알려 주세요."
+        db.execute("UPDATE studies SET title=? WHERE id=?", (title, sid))
+        return f"채팅방 이름을 '{title}'(으)로 바꿨어요."
     return ""

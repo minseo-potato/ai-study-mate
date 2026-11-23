@@ -149,8 +149,48 @@ def demo_topic(payload: dict) -> str:
     return str(payload.get("study_goal") or payload.get("goal") or "이번 주 내용")[:30]
 
 
+def has_pref(payload: dict, word: str) -> bool:
+    return any(word in str(p) for p in payload.get("user_preferences") or [])
+
+
+def demo_free_reply(payload: dict) -> dict:
+    """질문이 없을 때 사용자가 먼저 건넨 말에, 어울리는 스터디원이 대답한다."""
+    text = str(payload.get("message", "")).strip()
+    members = payload.get("members") or []
+    topic = demo_topic(payload)
+    pages = payload.get("source_pages") or []
+
+    def pick(perspective: str):
+        return next((m for m in members if m.get("perspective") == perspective), members[0] if members else {})
+
+    asked = "?" in text or "？" in text or any(w in text for w in ("뭐야", "뭐예요", "뭔가요", "알려", "궁금", "어떻게", "왜"))
+    if "예시" in text or "예를" in text:
+        speaker = pick("예시와 적용")
+    elif any(w in text for w in ("왜", "근데", "그런데", "아닌", "반대")):
+        speaker = pick("다른 해석")
+    elif any(w in text for w in ("지난", "앞에서", "연결", "관계")):
+        speaker = pick("앞 주차와의 연결")
+    else:
+        speaker = pick("개념과 정의")
+    if any(w in text for w in ("어려", "모르겠", "헷갈")):
+        reply = f"괜찮아요, 처음엔 다들 헷갈려요. '{topic}'에서 제일 막히는 부분 하나만 골라서 같이 쪼개 봐요."
+    elif asked and pages:
+        snippet = pages[0]["text"][:70].replace("\n", " ")
+        reply = f"좋은 질문이에요! 교안 {pages[0]['page_no']}쪽에 '{snippet}…'라는 내용이 있어요. 이걸 같이 보면서 정리해 봐요."
+    elif asked:
+        reply = f"좋은 질문이에요! '{topic}' 기준으로 같이 찾아봐요. 먼저 떠오르는 생각을 말해 주면 거기서부터 이어 갈게요."
+    else:
+        reply = f"오, 그렇게 생각했군요! 그 생각을 '{topic}'와 이어서 조금 더 이야기해 봐요."
+    if has_pref(payload, "짧고"):
+        reply = reply.split(". ")[0].rstrip(".") + "."
+    return {"speaker_no": speaker.get("member_no"), "reply": reply,
+            "page_no": pages[0]["page_no"] if asked and pages else None}
+
+
 def demo_response(instructions: str, payload: dict) -> dict:
     """Predictable offline responses for an API-key-free live demonstration."""
+    if "자유 대화 응답" in instructions:
+        return demo_free_reply(payload)
     if "답변 검토" in instructions:
         answer = payload["answer"].strip()
         pages = payload["source_pages"]
@@ -210,16 +250,21 @@ def demo_response(instructions: str, payload: dict) -> dict:
         f"지금까지 나눈 이야기와 '{lead}'를 연결해 보면 어떤 생각이 들어요?",
     ]
     chosen_question = questions[question_count % len(questions)]
-    persona_questions = DEMO_QUESTIONS.get(member.get("perspective"))
-    if question_count and persona_questions:
+    # 사용자가 '예시 위주로' 같은 진행 방식을 정했으면 그 방식의 질문을 고른다.
+    persona_questions = DEMO_QUESTIONS.get("예시와 적용" if has_pref(payload, "예시") else member.get("perspective"))
+    if (question_count or has_pref(payload, "예시")) and persona_questions:
         own = sum(m["role"] == "assistant" and m.get("member_no") == member.get("member_no") for m in previous)
         chosen_question = persona_questions[own % len(persona_questions)].format(topic=demo_topic(payload))
     if review_focus:
         chosen_question = f"지난번에 남겨둔 '{review_focus[:80]}'부터 같이 확인해 볼까요? 지금은 어떻게 설명할 수 있어요?"
     if question_count >= len(questions):
         chosen_question = f"이번엔 {question_count + 1}번째로 생각해 볼게요. {chosen_question}"
+    if has_pref(payload, "퀴즈"):
+        chosen_question = f"퀴즈! {chosen_question}"
     comment = (f"이번 주 '{demo_topic(payload)}' 같이 살펴봐요!" if not previous else
                "저도 그 부분이 궁금했어요. 같이 이어서 생각해 봐요." if question_count % 3 == 0 else "")
+    if has_pref(payload, "짧고"):
+        comment = ""
     members = payload.get("members", [member])
     other = next((m.get("member_no") for m in members if m.get("member_no") != member.get("member_no")), None)
     return {"speaker_no": member.get("member_no"), "comment": comment if other else "",

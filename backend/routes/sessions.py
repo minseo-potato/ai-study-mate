@@ -5,7 +5,7 @@ import ai
 from auth import current_user
 import planner
 from db import connect, dumps, loads
-from common import PEER_RULES, build_qa, clean_list, learning_messages, qa_stats, required, session_data, source_pages, study_data
+from common import PEER_RULES, build_qa, peer_context, clean_list, learning_messages, qa_stats, required, session_data, source_pages, study_data
 
 
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -136,8 +136,10 @@ async def next_question(session_id: int):
         "include_previous_questions가 참이고 review_focus가 있으면 이번 세션 첫 질문은 그 복습 내용을 먼저 확인하세요. "
         "거짓이면 이번 주차 범위만 질문하세요. "
         "거짓이어도 동료들의 누적 understanding을 지우거나 되돌리지 마세요. 기존 질문을 반복하지 말고 바로 정답을 알려주지 마세요. "
-        "교안 근거가 있다면 page_no에 제공된 쪽수 하나를 쓰고, understanding에는 질문자가 이번 대화에서 이해한 내용을 짧게 적으세요.",
-        {"study_goal": study["goal"], "week": question_week, "member": member,
+        "교안 근거가 있다면 page_no에 제공된 쪽수 하나를 쓰고, understanding에는 질문자가 이번 대화에서 이해한 내용을 짧게 적으세요. "
+        "직전에 사용자가 진행 방식을 바꿨다면(assistant_plan) 바뀐 방식으로 바로 다음 질문을 하세요.",
+        {**peer_context(study, session["messages"]),
+         "study_goal": study["goal"], "week": question_week, "member": member,
          "members": study["members"], "suggested_member_no": member["member_no"],
          "initial_note": session["initial_note"], "messages": session["messages"][-12:],
          "question_count": question_count, "review_focus": review_focus,
@@ -156,7 +158,8 @@ async def next_question(session_id: int):
         "앞선 질문과 겹쳤습니다. 아래 질문과 다른 새 질문 한 개를 speaker의 persona 관점으로 만드세요. "
             "JSON 키는 speaker_no,comment,comment_member_no,question,page_no,understanding입니다. "
             "이번 주 범위와 교안에 근거하고, 답변의 맥락을 이어 가세요.",
-            {"study_goal": study["goal"], "week": question_week, "member": member,
+            {**peer_context(study, session["messages"]),
+             "study_goal": study["goal"], "week": question_week, "member": member,
              "members": study["members"], "messages": session["messages"][-12:],
              "question_count": question_count, "review_focus": review_focus,
              "asked_questions": list(prior_questions), "source_pages": pages + previous_pages,
@@ -217,7 +220,7 @@ async def explain(session_id: int):
         "흐름 연결은 앞에서 배운 관련 내용, 깊이 파기는 따져 볼 기준을 짚어 주면 좋습니다. "
         "교안에 없는 사실이나 페이지 번호를 만들지 마세요. 교안이 없으면 생각의 방향만 알려주세요. "
         "JSON 키는 explanation,page_no입니다.",
-        {"goal": study["goal"], "week": week, "question": question["body"],
+        {**peer_context(study, messages), "goal": study["goal"], "week": week, "question": question["body"],
          "member": next((m for m in study["members"] if m["member_no"] == question["member_no"]), None),
          "initial_note": session["initial_note"], "messages": messages[-12:], "source_pages": pages},
     )
@@ -250,11 +253,11 @@ async def answer(session_id: int, body: Answer):
             raise HTTPException(409, "종료된 대화입니다.")
         study = study_data(db, session["study_id"])
     # 일정·계획 변경 같은 운영 요청은 채팅에서 바로 반영하고 스터디원이 확인 메시지를 남긴다.
-    command = await planner.parse(text, session["week_no"], len(study["weeks"]), study["weeks"])
+    command = await planner.parse(text, session["week_no"], len(study["weeks"]), study["weeks"], study["members"])
     if command:
         with connect() as db:
             reply = await planner.apply(db, study_data(db, session["study_id"]), command, session["week_no"])
-            speaker = (session["next_member"] - 1) % max(1, len(study["members"])) + 1
+            speaker = command.get("speaker_no") or (session["next_member"] - 1) % max(1, len(study["members"])) + 1
             db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (session_id, "user", text))
             db.execute("INSERT INTO messages(session_id,role,member_no,body) VALUES(?,?,?,?)",
                        (session_id, "assistant_plan", speaker, reply or "알겠어요!"))
@@ -262,9 +265,32 @@ async def answer(session_id: int, body: Answer):
             response["plan_changed"] = True
             return response
     if not session["messages"] or session["messages"][-1]["role"] not in ("assistant", "assistant_hint"):
-        # 질문이 없을 때 보낸 말은 대화로 남기고, 다음 질문이 이를 이어받는다.
+        # 질문이 없을 때 보낸 말(질문, 생각, 잡담)에도 어울리는 스터디원이 먼저 대답하고, 다음 질문이 이를 이어받는다.
+        with connect() as db:
+            week = study["weeks"][session["week_no"] - 1]
+            pages = source_pages(db, session["study_id"], week["scope"], text, session["week_no"], len(study["weeks"]))
+        result = await ai.generate_json(
+            PEER_RULES +
+            "자유 대화 응답: 사용자가 질문을 받지 않은 상태에서 먼저 말을 걸었습니다. 이 말에 가장 잘 대답할 동료를 speaker_no로 고르세요"
+            "(개념을 묻는 말이면 '개념 정리', 예시를 원하면 '사례 찾기', 앞 내용과의 관계면 '흐름 연결', 의문·반론이면 '깊이 파기'). "
+            "사용자가 질문했다면 교안과 대화에 근거해 그 동료의 관점으로 두세 문장 안에 답하고, 확실하지 않으면 그렇다고 말하세요. "
+            "생각이나 감상이면 공감하고 한 가지를 덧붙이세요. 질문을 새로 던지지는 마세요(다음 차례에 따로 묻습니다). "
+            "JSON 키는 speaker_no,reply,page_no입니다. page_no는 제공된 교안 쪽수만 쓰세요.",
+            {**peer_context(study, session["messages"] + [{"role": "user", "body": text}]),
+             "message": text, "study_goal": study["goal"], "week": week, "members": study["members"],
+             "messages": session["messages"][-10:], "source_pages": pages},
+        )
+        reply = str(result.get("reply", "")).strip()[:1500]
+        speaker = result.get("speaker_no")
+        if speaker not in {m["member_no"] for m in study["members"]}:
+            speaker = study["members"][0]["member_no"] if study["members"] else None
+        page_no = result.get("page_no") if result.get("page_no") in {p["page_no"] for p in pages} else None
         with connect() as db:
             db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (session_id, "user", text))
+            if reply:
+                db.execute("INSERT INTO messages(session_id,role,member_no,body,page_no,pdf_version) VALUES(?,?,?,?,?,?)",
+                           (session_id, "assistant_reaction", speaker, reply, page_no,
+                            study["pdf_version"] if page_no is not None else None))
             return session_data(db, session_id)
     with connect() as db:
         session = session_data(db, session_id)
@@ -288,9 +314,11 @@ async def answer(session_id: int, body: Answer):
         "교안이 없거나 근거가 부족하면 정답이라고 단정하지 마세요. 무관하거나 장난스러운 답변은 인용하지 말고 "
         "질문으로 돌아올 수 있게 친절하게 말하세요. 사용자가 역으로 질문했다면 그 질문에 교안 기준으로 짧게 답하고 대화를 이어가세요. "
         "다른 동료들도 대화를 듣고 있으므로 이번 답에서 새로 이해한 점을 understanding에 반영하세요. "
-        "자연스러운 한국어 존댓말 한두 문장으로 반응하세요. JSON 키는 reaction,alignment,page_no,understanding입니다. "
+        "사용자가 '모르겠다', '어렵다'처럼 막혔다면 틀렸다고 하지 말고 자기 persona 관점의 작은 실마리 하나를 주세요. "
+        "자연스러운 한국어 한두 문장으로 반응하세요. JSON 키는 reaction,alignment,page_no,understanding입니다. "
         "alignment는 supported,partial,off_topic,uncertain,user_question 중 하나입니다. page_no는 제공된 교안 쪽수만 쓰세요.",
-        {"question": question["body"], "answer": body.text.strip(), "member": member,
+        {**peer_context(study, session["messages"] + [{"role": "user", "body": body.text.strip()}]),
+         "question": question["body"], "answer": body.text.strip(), "member": member,
          "study_goal": study["goal"], "week": week, "source_pages": pages, "messages": session["messages"][-8:]},
     )
     reaction = str(result.get("reaction", "")).strip()
@@ -352,7 +380,7 @@ async def finish(session_id: int, body: Finish):
         "next_checks: 다음 주에 다시 확인할 질문 배열이며, 이미 충분히 답한 내용은 넣지 마세요. "
         "qa에 질문과 사용자 답이 짝지어 있습니다. 일정·계획 변경 대화는 학습 내용이 아니므로 빼고, "
         "사용자가 말하지 않은 내용을 사용자가 설명했다고 쓰지 마세요.",
-        {"study_goal": study["goal"], "week": week, "qa": qa,
+        {**peer_context(study, talk), "study_goal": study["goal"], "week": week, "qa": qa,
          "initial_note": session["initial_note"], "revised_note": body.revised_note,
          "messages": talk, "unanswered": pending, "source_pages": pages},
     )

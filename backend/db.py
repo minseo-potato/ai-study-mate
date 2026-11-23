@@ -109,6 +109,9 @@ def migrate(db):
     if "user_id" not in study_columns:
         db.execute("ALTER TABLE studies ADD COLUMN user_id INTEGER")
     # 프로필 모양: "아이콘:색번호" (예: "book:3"). 비어 있으면 앱이 기본 모양을 쓴다.
+    # 사용자가 채팅으로 정한 진행 방식(JSON 문자열 배열). 모든 스터디원 프롬프트에 들어간다.
+    if "preferences" not in study_columns:
+        db.execute("ALTER TABLE studies ADD COLUMN preferences TEXT NOT NULL DEFAULT '[]'")
     if "avatar" not in study_columns:
         db.execute("ALTER TABLE studies ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
     # 예전 기본 이름(지식이 등)을 그대로 쓰는 AI 친구는 새 기본 이름으로 바꾼다. 직접 바꾼 이름은 그대로 둔다.

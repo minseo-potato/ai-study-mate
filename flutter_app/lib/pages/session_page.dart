@@ -172,6 +172,15 @@ class _SessionPageState extends State<SessionPage> {
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
   /// 채팅방 이름과 프로필 바꾸기.
+  /// 채팅으로 정한 진행 방식(예: 예시 위주, 짧게).
+  List get preferences => (session?['preferences'] as List?) ?? [];
+  Future<void> removePreference(String item) async {
+    try {
+      await Api.request('PUT', '/studies/${session!['study_id']}/preferences',
+        {'items': [for (final p in preferences) if ('$p' != item) '$p']});
+      await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
   Future<void> editRoom() async {
     final s = session!;
     final edit = await showProfileEditor(context, title: '채팅방 프로필', name: roomTitle,
@@ -304,6 +313,18 @@ class _SessionPageState extends State<SessionPage> {
             MyAvatar(size: 38), SizedBox(width: 12),
             Text('나', style: TextStyle(fontWeight: FontWeight.w600)),
           ])),
+        ]),
+        InfoSection(title: '진행 방식', children: [
+          if (preferences.isEmpty)
+            const Text("채팅에서 '쉽게 해 줘', '예시 위주로'처럼 말하면 여기에 저장돼요.",
+              style: TextStyle(fontSize: 13, color: mutedInk, height: 1.45))
+          else Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final p in preferences) InputChip(
+              label: Text('$p', style: const TextStyle(fontSize: 12.5)),
+              backgroundColor: brandSoft, side: BorderSide.none,
+              deleteIcon: const Icon(Icons.close_rounded, size: 16), deleteButtonTooltipMessage: '지우기',
+              onDeleted: busy ? null : () => removePreference('$p')),
+          ]),
         ]),
         InfoSection(title: '교안', children: [
           InkWell(onTap: busy ? null : () { close(); attachPdf(); }, borderRadius: BorderRadius.circular(12),

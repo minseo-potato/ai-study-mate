@@ -375,6 +375,17 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(moved["session"]["week_no"], 2)
             self.assertEqual([h["id"] for h in moved["history"]], [session_id])
 
+            # 채팅으로 진행 방식·난이도를 바꾸면 바로 저장되고, 바뀐 당사자가 대답한다.
+            styled = alice.post(f"/sessions/{moved['session']['id']}/answer", json={"text": "예시 위주로 해줘"}).json()
+            self.assertEqual(styled["preferences"], ["예시를 많이 들어 가며 이야기하기"])
+            self.assertEqual(styled["messages"][-1]["role"], "assistant_plan")
+            leveled = alice.post(f"/sessions/{moved['session']['id']}/answer", json={"text": "도현이는 심화로 물어봐줘"}).json()
+            self.assertEqual(leveled["messages"][-1]["member_no"], 2)
+            self.assertEqual(leveled["members"][1]["level"], "심화")
+            asked = alice.post(f"/sessions/{moved['session']['id']}/answer", json={"text": "조건부 확률이 뭐야?"}).json()
+            self.assertEqual([m["role"] for m in asked["messages"][-2:]], ["user", "assistant_reaction"])
+            question = alice.post(f"/sessions/{moved['session']['id']}/question").json()["messages"][-1]["body"]
+            self.assertIn("예를 들어", question)  # '예시 위주' 요청을 질문이 따른다
             batch = alice.put(f"/studies/{study['id']}/weeks", json={"weeks": [
                 {"week_no": 3, "title": "베이즈", "scope": "조건부 확률과 베이즈 정리"}]})
             self.assertEqual(batch.json()["weeks"][2]["title"], "베이즈")
@@ -387,7 +398,7 @@ class FlowTest(unittest.TestCase):
             self.assertIn("가능성", report_week["learned"][0])
             self.assertIn("가능성", report_week["highlight"])
             me = alice.get("/me").json()
-            self.assertEqual((me["user"]["name"], me["stats"]["completed_weeks"], me["stats"]["answers"]), ("앨리스", 1, 1))
+            self.assertEqual((me["user"]["name"], me["stats"]["completed_weeks"], me["stats"]["answers"]), ("앨리스", 1, 2))
             self.assertEqual(alice.put("/me", json={"name": "바비"}).status_code, 409)
             self.assertEqual(alice.delete(f"/studies/{study['id']}").status_code, 200)
             self.assertEqual(alice.get("/studies").json(), [])
