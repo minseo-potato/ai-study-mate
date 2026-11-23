@@ -88,7 +88,7 @@ class FlowTest(unittest.TestCase):
 
     def test_review_queue_and_learning_report_follow_real_study_records(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
-            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
             client = TestClient(app)
             study = client.post("/studies", data={"title": "신경망", "goal": "훈련과 검증 이해",
                 "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"}).json()
@@ -127,7 +127,7 @@ class FlowTest(unittest.TestCase):
 
     def test_room_management_and_later_pdf_keep_old_sources(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
-            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
             client = TestClient(app)
             study = client.post("/studies", data={"title": "첫 이름", "goal": "정렬 배우기",
                 "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"}).json()
@@ -168,7 +168,7 @@ class FlowTest(unittest.TestCase):
 
     def test_pinned_room_opens_first_and_empty_notes_can_finish(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
-            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
             client = TestClient(app)
             ids = []
             for title in ("첫 방", "두 번째 방"):
@@ -234,7 +234,7 @@ class FlowTest(unittest.TestCase):
                         "understanding": "정렬 예시를 더 알고 싶다."}
             return await fake_ai(instructions, payload)
 
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", social_ai):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", social_ai):
             client = TestClient(app)
             study = client.post("/studies", data={"title": "정렬", "goal": "정렬 방법 비교",
                 "start_date": "2026-11-18", "weeks": "2", "hours_per_week": "3", "member_count": "2"}).json()
@@ -295,7 +295,7 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(result["page_no"], 1)
 
     def test_study_without_pdf_can_start_chat(self):
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
             client = TestClient(app)
             created = client.post("/studies", data={"title": "알고리즘", "goal": "정렬 원리 설명", "start_date": "2026-11-16",
                 "weeks": "2", "hours_per_week": "3", "member_count": "2",
@@ -323,7 +323,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(answer.json()["answer_alignment"], "uncertain")
 
     def test_study_to_minutes_and_next_week_review(self):
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", fake_ai):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
             client = TestClient(app)
             created = client.post("/studies", data={"title": "신경망", "goal": "학습 과정을 설명한다", "start_date": "2026-11-16",
                 "weeks": "2", "hours_per_week": "3", "member_count": "2"},
@@ -380,6 +380,13 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(updated["weeks"][0]["remaining_scope"], "")
             self.assertIn("검증 데이터를 따로 두는 이유는 무엇인가요?", updated["weeks"][1]["review"])
             self.assertEqual(len(client.get(f"/studies/{study['id']}/minutes").json()), 1)
+            history = client.get(f"/studies/{study['id']}/history").json()
+            self.assertEqual([h["id"] for h in history], [session_id])
+            self.assertEqual(history[0]["messages"][-1]["role"], "assistant_reaction")
+            room = next(s for s in client.get("/studies").json() if s["id"] == study["id"])
+            self.assertEqual(room["current_week"]["week_no"], 2)
+            self.assertEqual(room["last_message"]["body"], history[0]["messages"][-1]["body"])
+            self.assertFalse(room["last_message"]["mine"])
 
     def test_pdf_questions_without_note_and_previous_week_toggle(self):
         captured = []
@@ -389,7 +396,7 @@ class FlowTest(unittest.TestCase):
                 captured.append(payload)
             return await fake_ai(instructions, payload)
 
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("main.generate_json", recording_ai):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", recording_ai):
             client = TestClient(app)
             created = client.post("/studies", data={"title": "신경망", "goal": "학습과 배포 이해", "start_date": "2026-11-16",
                 "weeks": "2", "hours_per_week": "3", "member_count": "2"},

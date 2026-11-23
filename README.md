@@ -53,10 +53,19 @@ PDF 없이 만들면 핵심 개념·원리와 예시·복습 순서의 기본 �
 
 | 파일 | 역할 |
 | --- | --- |
-| `backend/main.py` | HTTP API, PDF 추출, 기본 주간 분배, 질문 순서, 회의록과 다음 주 복습 반영 |
+| `backend/main.py` | FastAPI 앱 생성과 라우터 연결, 상태 확인 |
+| `backend/common.py` | 공통 상수, PDF 추출, 스터디·세션 조회, 교안 쪽 고르기 |
+| `backend/routes/studies.py` | 스터디 생성·채팅 목록·계획 수정 API |
+| `backend/routes/sessions.py` | 질문·힌트·답변(채팅 속 일정 변경 포함)·주차 마무리·지난 대화 API |
+| `backend/routes/records.py` | 회의록, 복습 항목, 성장 리포트 API |
+| `backend/planner.py` | 채팅 메시지 속 일정·계획 변경 요청 해석과 반영 |
 | `backend/ai.py` | 서버에서만 OpenAI Responses API 호출, JSON 결과 처리 |
 | `backend/db.py` | SQLite 테이블과 연결 관리 |
-| `flutter_app/lib/main.dart` | 생성·계획 확인/수정·발표·질의응답·회의록 화면 |
+| `flutter_app/lib/main.dart` | 앱 시작과 테마 |
+| `flutter_app/lib/api.dart` | 백엔드 호출 |
+| `flutter_app/lib/theme.dart` | 색상·크기 상수 |
+| `flutter_app/lib/widgets/` | 공통 위젯, 말풍선·프로필 등 채팅 위젯 |
+| `flutter_app/lib/pages/` | 채팅 목록, 채팅방, 스터디 만들기, 계획·기록 화면 |
 
 ## 구현 메모
 
