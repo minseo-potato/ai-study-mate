@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 import ai
 from auth import current_user
 from db import connect
-from common import INITIAL_UNDERSTANDING, LEVELS, MEMBER_LEVELS, PEER_NAMES, PERSPECTIVES, read_pdf, required, study_data
+from common import AVATAR_PATTERN, INITIAL_UNDERSTANDING, LEVELS, MEMBER_LEVELS, PEER_NAMES, PERSPECTIVES, read_pdf, required, study_data
 
 
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -55,6 +55,7 @@ def pin_study(study_id: int, user: dict = Depends(current_user)):
 class StudyDetails(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     archived: bool | None = None
+    avatar: str | None = Field(default=None, pattern=AVATAR_PATTERN)
 
 
 @router.put("/studies/{study_id}/details")
@@ -65,8 +66,9 @@ def edit_study_details(study_id: int, body: StudyDetails):
         if not title:
             raise HTTPException(400, "채팅방 이름을 입력해 주세요.")
         archived = study["archived"] if body.archived is None else int(body.archived)
-        db.execute("UPDATE studies SET title=?,archived=?,pinned=? WHERE id=?",
-                   (title, archived, 0 if archived else study["pinned"], study_id))
+        avatar = study["avatar"] if body.avatar is None else body.avatar
+        db.execute("UPDATE studies SET title=?,archived=?,pinned=?,avatar=? WHERE id=?",
+                   (title, archived, 0 if archived else study["pinned"], avatar, study_id))
         return study_data(db, study_id)
 
 
@@ -154,21 +156,26 @@ async def create_study(
         for number in range(1, member_count + 1):
             profile = profiles[number-1] if profiles else {}
             role = profile.get("role", (number - 1) % 4)
-            db.execute("INSERT INTO members(study_id,member_no,name,perspective,level,understanding) VALUES(?,?,?,?,?,?)",
+            avatar = str(profile.get("avatar") or "")
+            if not re.match(AVATAR_PATTERN, avatar):
+                avatar = ""
+            db.execute("INSERT INTO members(study_id,member_no,name,perspective,level,understanding,avatar) "
+                       "VALUES(?,?,?,?,?,?,?)",
                        (study_id, number, profile.get("name", "").strip() or PEER_NAMES[role], PERSPECTIVES[role],
                         profile.get("level", LEVELS[role]),
-                        (profile.get("understanding") or INITIAL_UNDERSTANDING[role]).strip()))
+                        (profile.get("understanding") or INITIAL_UNDERSTANDING[role]).strip(), avatar))
         return study_data(db, study_id)
 
 
 class MemberEdit(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=12)
     level: str | None = None
+    avatar: str | None = Field(default=None, pattern=AVATAR_PATTERN)
 
 
 @router.put("/studies/{study_id}/members/{member_no}")
 def edit_member(study_id: int, member_no: int, body: MemberEdit):
-    """채팅방 정보에서 AI 스터디원의 이름과 학습 단계를 바꾼다."""
+    """채팅방 정보에서 AI 스터디원의 이름·학습 단계·프로필 모양을 바꾼다."""
     with connect() as db:
         member = required(db, "SELECT * FROM members WHERE study_id=? AND member_no=?", (study_id, member_no))
         name = member["name"] if body.name is None else body.name.strip()
@@ -177,8 +184,9 @@ def edit_member(study_id: int, member_no: int, body: MemberEdit):
         level = body.level or member["level"]
         if level not in MEMBER_LEVELS:
             raise HTTPException(400, "학습 단계는 기초, 중급, 심화 중 하나예요.")
-        db.execute("UPDATE members SET name=?,level=? WHERE study_id=? AND member_no=?",
-                   (name, level, study_id, member_no))
+        avatar = member["avatar"] if body.avatar is None else body.avatar
+        db.execute("UPDATE members SET name=?,level=?,avatar=? WHERE study_id=? AND member_no=?",
+                   (name, level, avatar, study_id, member_no))
         return study_data(db, study_id)
 
 

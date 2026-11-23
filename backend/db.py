@@ -108,6 +108,12 @@ def migrate(db):
                                (session["study_id"], question.strip(), session["week_no"]))
     if "user_id" not in study_columns:
         db.execute("ALTER TABLE studies ADD COLUMN user_id INTEGER")
+    # 프로필 모양: "아이콘:색번호" (예: "book:3"). 비어 있으면 앱이 기본 모양을 쓴다.
+    if "avatar" not in study_columns:
+        db.execute("ALTER TABLE studies ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
+    for table in ("members", "users"):
+        if "avatar" not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
     db.execute("CREATE INDEX IF NOT EXISTS studies_user ON studies(user_id,archived)")
 
 

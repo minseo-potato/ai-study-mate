@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../theme.dart';
+import '../widgets/avatar.dart';
 import '../widgets/chat.dart';
 import '../widgets/common.dart';
 
@@ -17,8 +18,10 @@ class _Friend {
   String name;
   String level;
   bool joined;
+  String avatar = '';
   _Friend(this.role, this.level, {this.joined = true}) : name = peerDefaultNames[role];
-  Map<String, dynamic> get asMember => {'perspective': peerRoles[role], 'name': name, 'member_no': role + 1};
+  Map<String, dynamic> get asMember =>
+    {'perspective': peerRoles[role], 'name': name, 'member_no': role + 1, 'avatar': avatar};
 }
 
 class _CreatePageState extends State<CreatePage> {
@@ -49,16 +52,10 @@ class _CreatePageState extends State<CreatePage> {
   }
 
   Future<void> rename(_Friend friend) async {
-    final controller = TextEditingController(text: friend.name);
-    final name = await showDialog<String>(context: context, builder: (dialogContext) => AlertDialog(
-      title: const Text('이름 바꾸기'),
-      content: TextField(controller: controller, autofocus: true, maxLength: 12,
-        onSubmitted: (v) => Navigator.pop(dialogContext, v.trim())),
-      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('취소')),
-        FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()), child: const Text('저장'))],
-    ));
-    controller.dispose();
-    if (name != null && name.isNotEmpty) setState(() => friend.name = name);
+    final edit = await showProfileEditor(context, title: 'AI 친구 프로필',
+      subtitle: '${peerRoleLabels[friend.role]} · ${peerRoleIntros[friend.role]}',
+      name: friend.name, avatar: memberAvatar(friend.asMember), nameMax: 12);
+    if (edit != null) setState(() { friend.name = edit.name; friend.avatar = edit.avatar.code; });
   }
 
   Future<void> submit() async {
@@ -70,7 +67,7 @@ class _CreatePageState extends State<CreatePage> {
       final study = await Api.create({
         'title': title.text.trim(), 'start_date': date, 'weeks': '$weeks',
         'member_count': '${joined.length}',
-        'member_profiles': jsonEncode([for (final f in joined) {'role': f.role, 'name': f.name, 'level': f.level}]),
+        'member_profiles': jsonEncode([for (final f in joined) {'role': f.role, 'name': f.name, 'level': f.level, 'avatar': f.avatar}]),
       }, pdf);
       if (mounted) Navigator.pop(context, study['id']);
     } catch (e) { if (mounted) errorMessage(context, e); }
@@ -88,7 +85,8 @@ class _CreatePageState extends State<CreatePage> {
       border: Border.all(color: f.joined ? memberAccent(f.asMember).withValues(alpha: 0.5) : lineColor)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Row(children: [
-        Opacity(opacity: f.joined ? 1 : 0.4, child: PeerAvatar(f.asMember, size: 42)),
+        GestureDetector(onTap: () => rename(f),
+          child: Opacity(opacity: f.joined ? 1 : 0.4, child: PeerAvatar(f.asMember, size: 42))),
         const SizedBox(width: 12),
         Expanded(child: InkWell(onTap: () => rename(f), borderRadius: BorderRadius.circular(8),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

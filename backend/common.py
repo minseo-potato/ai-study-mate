@@ -53,6 +53,7 @@ LEVEL_GUIDE = {
     "심화": "응용, 비교, 한계까지 깊게 묻고 더 정밀한 설명을 요구한다.",
 }
 MEMBER_LEVELS = ("기초", "중급", "심화")
+AVATAR_PATTERN = r"^([a-z_]{1,20}:\d{1,2})?$"
 
 
 def learning_messages(messages: list) -> list:
@@ -128,7 +129,9 @@ async def read_pdf(upload: UploadFile):
 
 def session_data(db, session_id):
     session = obj(required(db, "SELECT * FROM sessions WHERE id=?", (session_id,)))
-    study = required(db, "SELECT pdf_name,pdf_version,weeks FROM studies WHERE id=?", (session["study_id"],))
+    study = required(db, "SELECT title,avatar,pdf_name,pdf_version,weeks FROM studies WHERE id=?", (session["study_id"],))
+    session["study_title"] = study["title"]
+    session["study_avatar"] = study["avatar"]
     session["pdf_name"] = study["pdf_name"]
     session["pdf_version"] = study["pdf_version"]
     session["total_weeks"] = study["weeks"]

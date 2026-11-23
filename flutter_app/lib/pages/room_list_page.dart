@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../api.dart';
 import '../theme.dart';
+import '../widgets/avatar.dart';
 import '../widgets/common.dart';
 import 'chat_room_page.dart';
 import 'create_page.dart';
@@ -9,10 +10,9 @@ import 'study_page.dart';
 
 /// 첫 화면: 메신저 채팅 목록처럼 스터디 채팅방을 모아 보여주고, 누르면 채팅방 페이지로 들어간다.
 class RoomListPage extends StatefulWidget {
-  final bool demoMode;
   /// 방을 만들거나 지우면 마이페이지 숫자도 새로 고치도록 알린다.
   final VoidCallback? onChanged;
-  const RoomListPage({super.key, this.demoMode = false, this.onChanged});
+  const RoomListPage({super.key, this.onChanged});
   @override State<RoomListPage> createState() => _RoomListPageState();
 }
 class _RoomListPageState extends State<RoomListPage> {
@@ -52,18 +52,10 @@ class _RoomListPageState extends State<RoomListPage> {
     catch (e) { if (mounted) errorMessage(context, e); }
   }
   Future<void> renameRoom(dynamic room) async {
-    final controller = TextEditingController(text: room['title']);
-    final name = await showDialog<String>(context: context, builder: (dialogContext) => AlertDialog(
-      title: const Text('채팅방 이름 바꾸기'),
-      content: TextField(controller: controller, autofocus: true, maxLength: 120,
-        decoration: const InputDecoration(labelText: '새 이름')),
-      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('취소')),
-        FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
-          child: const Text('저장'))],
-    ));
-    controller.dispose();
-    if (name == null || name.isEmpty) return;
-    try { await Api.request('PUT', '/studies/${room['id']}/details', {'title': name});
+    final edit = await showProfileEditor(context, title: '채팅방 프로필', name: '${room['title']}',
+      avatar: roomAvatar(room), nameMax: 120);
+    if (edit == null) return;
+    try { await Api.request('PUT', '/studies/${room['id']}/details', {'title': edit.name, 'avatar': edit.avatar.code});
       if (mounted) await refresh(); }
     catch (e) { if (mounted) errorMessage(context, e); }
   }
@@ -118,7 +110,7 @@ class _RoomListPageState extends State<RoomListPage> {
           maxLines: 1, overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
         if (!archived && !pinned) item('pin', Icons.push_pin_outlined, '맨 위에 고정'),
-        item('rename', Icons.edit_outlined, '이름 바꾸기'),
+        item('rename', Icons.edit_outlined, '프로필 바꾸기'),
         item('plan', Icons.calendar_month_outlined, '전체 계획·일정'),
         item(archived ? 'restore' : 'archive', archived ? Icons.unarchive_outlined : Icons.archive_outlined,
           archived ? '다시 사용하기' : '보관하기'),
@@ -147,7 +139,6 @@ class _RoomListPageState extends State<RoomListPage> {
     final pinned = room['pinned'] == 1;
     final archived = room['archived'] == 1;
     final week = room['current_week'];
-    final accent = peerAccents[(room['id'] as int) % peerAccents.length];
     final id = room['id'] as int;
     final checked = selected?.contains(id) ?? false;
     return InkWell(
@@ -158,10 +149,7 @@ class _RoomListPageState extends State<RoomListPage> {
         if (editing) Padding(padding: const EdgeInsets.only(right: 14), child: Icon(
           checked ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
           color: checked ? brand : const Color(0xFFC5C8CE))),
-        Opacity(opacity: archived ? 0.5 : 1, child: Container(width: 52, height: 52, alignment: Alignment.center,
-          decoration: BoxDecoration(color: accent.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(19)),
-          child: Text(title.isEmpty ? '?' : title.characters.first,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: accent)))),
+        Opacity(opacity: archived ? 0.5 : 1, child: ProfileAvatar(roomAvatar(room), size: 52, soft: true)),
         const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
@@ -248,13 +236,7 @@ class _RoomListPageState extends State<RoomListPage> {
       ) : AppBar(
         titleSpacing: 20,
         shape: const Border(),
-        title: Row(children: [
-          const Text('채팅', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-          if (widget.demoMode) Container(margin: const EdgeInsets.only(left: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(8)),
-            child: const Text('체험 모드', style: TextStyle(fontSize: 11, color: brand, fontWeight: FontWeight.w600))),
-        ]),
+        title: const Text('채팅', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
         actions: [
           if (studies.length > 1) IconButton(tooltip: '검색', isSelected: searching,
             icon: const Icon(Icons.search_rounded), selectedIcon: const Icon(Icons.close_rounded),

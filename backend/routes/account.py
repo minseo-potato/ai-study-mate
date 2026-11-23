@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from ai import demo_mode
 from auth import check_password, current_user, hash_password, issue_token
+from common import AVATAR_PATTERN
 from db import connect
 
 router = APIRouter()
@@ -19,7 +20,7 @@ class Credentials(BaseModel):
 
 
 def account_payload(db, user_id: int) -> dict:
-    user = db.execute("SELECT id,name,created_at FROM users WHERE id=?", (user_id,)).fetchone()
+    user = db.execute("SELECT id,name,avatar,created_at FROM users WHERE id=?", (user_id,)).fetchone()
     stats = db.execute(
         "SELECT COUNT(*) AS studies,"
         " COALESCE(SUM((SELECT COUNT(*) FROM weeks w WHERE w.study_id=st.id AND w.status='complete')),0) AS completed_weeks,"
@@ -75,16 +76,20 @@ def me(user: dict = Depends(current_user)):
 
 
 class Profile(BaseModel):
-    name: str = Field(min_length=2, max_length=20)
+    name: str | None = Field(default=None, min_length=2, max_length=20)
+    avatar: str | None = Field(default=None, pattern=AVATAR_PATTERN)
 
 
 @router.put("/me")
 def edit_me(body: Profile, user: dict = Depends(current_user)):
-    name = body.name.strip()
     with connect() as db:
-        if db.execute("SELECT 1 FROM users WHERE name=? AND id!=?", (name, user["id"])).fetchone():
-            raise HTTPException(409, "이미 쓰고 있는 이름이에요.")
-        db.execute("UPDATE users SET name=? WHERE id=?", (name, user["id"]))
+        if body.name is not None:
+            name = body.name.strip()
+            if db.execute("SELECT 1 FROM users WHERE name=? AND id!=?", (name, user["id"])).fetchone():
+                raise HTTPException(409, "이미 쓰고 있는 이름이에요.")
+            db.execute("UPDATE users SET name=? WHERE id=?", (name, user["id"]))
+        if body.avatar is not None:
+            db.execute("UPDATE users SET avatar=? WHERE id=?", (body.avatar, user["id"]))
         return account_payload(db, user["id"])
 
 

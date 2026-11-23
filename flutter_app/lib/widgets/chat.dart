@@ -1,28 +1,22 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../api.dart';
 import '../theme.dart';
+import 'avatar.dart';
 
-/// AI 스터디원 프로필: 역할 색 동그라미에 이름 첫 글자.
+/// AI 스터디원 프로필(아이콘·색은 직접 바꿀 수 있고, 기본값은 역할별 모양).
 class PeerAvatar extends StatelessWidget {
   final Map member;
   final double size;
   const PeerAvatar(this.member, {super.key, this.size = 36});
-  @override Widget build(BuildContext context) {
-    final name = memberName(member);
-    return Container(width: size, height: size, alignment: Alignment.center,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: memberAccent(member)),
-      child: Text(name.characters.first, style: TextStyle(color: Colors.white,
-        fontWeight: FontWeight.w700, fontSize: size * 0.42)));
-  }
+  @override Widget build(BuildContext context) => ProfileAvatar(memberAvatar(member), size: size);
 }
 
 /// 내 프로필.
 class MyAvatar extends StatelessWidget {
   final double size;
   const MyAvatar({super.key, this.size = 36});
-  @override Widget build(BuildContext context) => Container(width: size, height: size, alignment: Alignment.center,
-    decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
-    child: Text('나', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: size * 0.38)));
+  @override Widget build(BuildContext context) => ProfileAvatar(userAvatar(Api.account?['user'] as Map?), size: size);
 }
 
 class ChatBubble extends StatelessWidget {

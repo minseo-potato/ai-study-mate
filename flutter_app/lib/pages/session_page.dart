@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../api.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/avatar.dart';
 import '../widgets/chat.dart';
 import 'study_page.dart';
 import 'learning_journey_page.dart';
@@ -157,42 +158,31 @@ class _SessionPageState extends State<SessionPage> {
       LearningJourneyPage(studyId: session!['study_id'] as int)));
     if (mounted) await refresh();
   }
-  /// AI 스터디원 프로필(이름·학습 단계) 바꾸기.
+  /// AI 스터디원 프로필(이름·학습 단계·모양) 바꾸기.
   Future<void> editMember(Map member) async {
-    final name = TextEditingController(text: memberName(member));
-    var level = '${member['level']}';
     final role = peerRole(member);
-    final saved = await showAdaptiveSheet<bool>(context, (sheetContext) => StatefulBuilder(
-      builder: (sheetContext, setSheet) => Column(mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Row(children: [
-            PeerAvatar({...member, 'name': name.text}, size: 48), const SizedBox(width: 14),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(peerRoleLabels[role], style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(peerRoleIntros[role], style: const TextStyle(fontSize: 13, color: mutedInk)),
-            ])),
-          ]),
-          const SizedBox(height: 20),
-          TextField(controller: name, maxLength: 12, onChanged: (_) => setSheet(() {}),
-            decoration: const InputDecoration(labelText: '이름')),
-          const SizedBox(height: 4),
-          const Text('학습 단계', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: subInk)),
-          const SizedBox(height: 8),
-          LevelPicker(value: level, onChanged: (v) => setSheet(() => level = v)),
-          const SizedBox(height: 20),
-          FilledButton(onPressed: name.text.trim().isEmpty ? null : () => Navigator.pop(sheetContext, true),
-            child: const Text('저장')),
-        ])));
-    final newName = name.text.trim();
-    name.dispose();
-    if (saved != true || !mounted) return;
+    final edit = await showProfileEditor(context, title: memberName(member),
+      subtitle: '${peerRoleLabels[role]} · ${peerRoleIntros[role]}',
+      name: memberName(member), avatar: memberAvatar(member), nameMax: 12, level: '${member['level']}');
+    if (edit == null || !mounted) return;
     try {
       await Api.request('PUT', '/studies/${session!['study_id']}/members/${member['member_no']}',
-        {'name': newName, 'level': level});
+        {'name': edit.name, 'level': edit.level, 'avatar': edit.avatar.code});
       await refresh();
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
+  /// 채팅방 이름과 프로필 바꾸기.
+  Future<void> editRoom() async {
+    final s = session!;
+    final edit = await showProfileEditor(context, title: '채팅방 프로필', name: roomTitle,
+      avatar: roomAvatar({'id': s['study_id'], 'avatar': s['study_avatar']}), nameMax: 120);
+    if (edit == null || !mounted) return;
+    try {
+      await Api.request('PUT', '/studies/${s['study_id']}/details', {'title': edit.name, 'avatar': edit.avatar.code});
+      await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  String get roomTitle => '${session?['study_title'] ?? widget.studyTitle ?? ''}';
   Future<void> togglePrevious(bool value) async {
     final current = session!['week'] as Map<String, dynamic>;
     try {
@@ -271,6 +261,14 @@ class _SessionPageState extends State<SessionPage> {
             onPressed: asDrawer ? close : () => setState(() => infoOpen = false)),
         ])),
       Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+        InkWell(onTap: busy ? null : () { close(); editRoom(); }, child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 16, 4), child: Row(children: [
+            ProfileAvatar(roomAvatar({'id': s['study_id'], 'avatar': s['study_avatar']}), size: 52, soft: true),
+            const SizedBox(width: 14),
+            Expanded(child: Text(roomTitle, maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
+            const Icon(Icons.edit_outlined, size: 18, color: mutedInk),
+          ]))),
         InfoSection(title: '이번 주', children: [
           Row(children: [
             Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -454,7 +452,7 @@ class _SessionPageState extends State<SessionPage> {
           if (s != null) ...[MemberStack(members: (s['members'] as List?) ?? []), const SizedBox(width: 10)],
           Expanded(child: Column(
           crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(widget.studyTitle ?? '${s?['week_no'] ?? ''}주차', maxLines: 1, overflow: TextOverflow.ellipsis,
+          Text(roomTitle.isEmpty ? '${s?['week_no'] ?? ''}주차' : roomTitle, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
           if (s != null) Text('${s['week_no']}/${s['total_weeks']}주차 · ${(s['week'] as Map)['title']}',
             maxLines: 1, overflow: TextOverflow.ellipsis,

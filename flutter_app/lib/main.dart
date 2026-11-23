@@ -67,7 +67,7 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> restore() async {
     await Api.loadToken();
     if (Api.token != null) {
-      try { account = await Api.request('GET', '/me') as Map<String, dynamic>; } catch (_) {}
+      try { account = Api.account = await Api.request('GET', '/me') as Map<String, dynamic>; } catch (_) {}
     }
     if (mounted) setState(() => ready = true);
   }
@@ -78,7 +78,7 @@ class _AuthGateState extends State<AuthGate> {
   }
   @override Widget build(BuildContext context) {
     if (!ready) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    if (account == null) return LoginPage(onSignedIn: (data) => setState(() => account = data));
+    if (account == null) return LoginPage(onSignedIn: (data) => setState(() => account = Api.account = data));
     return HomeShell(key: ValueKey(account!['user']['id']), account: account!, onSignOut: signOut);
   }
 }

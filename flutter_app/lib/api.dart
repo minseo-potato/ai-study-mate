@@ -17,6 +17,8 @@ class Api {
   static final _client = http.Client();
   static const _tokenKey = 'auth_token';
   static String? token;
+  /// 로그인한 내 계정 정보(/me 응답). 내 프로필을 그릴 때 쓴다.
+  static Map<String, dynamic>? account;
   /// 토큰이 만료되면 앱이 로그인 화면으로 돌아가도록 알린다.
   static void Function()? onSignedOut;
 

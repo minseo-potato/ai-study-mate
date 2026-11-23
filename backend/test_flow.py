@@ -173,6 +173,9 @@ class FlowTest(unittest.TestCase):
             os.environ.pop("DEMO_MODE", None)
             self.assertTrue(demo_mode())
             self.assertTrue(TestClient(app).get("/health").json()["demo_mode"])
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            os.environ.pop("DEMO_MODE", None)
+            self.assertFalse(demo_mode())  # 키만 넣으면 실제 AI
         with patch.dict(os.environ, {"DEMO_MODE": "0", "OPENAI_API_KEY": ""}):
             self.assertFalse(demo_mode())
             self.assertFalse(TestClient(app).get("/health").json()["ai_ready"])
@@ -221,13 +224,13 @@ class FlowTest(unittest.TestCase):
                 {"type": "output_text", "text": '{"question":"같이 생각해 볼까요?"}'}]}]})
 
         client_class = httpx.AsyncClient
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-only-key", "OPENAI_MODEL": "gpt-6-sol", "DEMO_MODE": "0"}), \
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-only-key", "OPENAI_MODEL": "gpt-6-luna", "DEMO_MODE": "0"}), \
              patch("ai.httpx.AsyncClient", side_effect=lambda **kwargs: client_class(
                  transport=httpx.MockTransport(respond))):
             result = asyncio.run(generate_json("질문", {"topic": "정렬"}))
         self.assertEqual(result["question"], "같이 생각해 볼까요?")
         self.assertEqual(seen["authorization"], "Bearer test-only-key")
-        self.assertEqual(seen["body"]["model"], "gpt-6-sol")
+        self.assertEqual(seen["body"]["model"], "gpt-6-luna")
         self.assertFalse(seen["body"]["store"])
 
     def test_demo_reacts_to_user_question(self):
@@ -323,6 +326,13 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(edited.status_code, 200, edited.text)
             self.assertEqual((edited.json()["members"][1]["name"], edited.json()["members"][1]["level"]), ("반례왕", "중급"))
             self.assertEqual(client.put(f"/studies/{study['id']}/members/2", json={"level": "최상"}).status_code, 400)
+            styled = client.put(f"/studies/{study['id']}/members/2", json={"avatar": "rocket:5"})
+            self.assertEqual(styled.json()["members"][1]["avatar"], "rocket:5")
+            self.assertEqual(client.put(f"/studies/{study['id']}/members/2", json={"avatar": "<b>"}).status_code, 422)
+            room = client.put(f"/studies/{study['id']}/details", json={"avatar": "book:2"})
+            self.assertEqual(room.json()["avatar"], "book:2")
+            me = client.put("/me", json={"avatar": "sun:1"}).json()
+            self.assertEqual((me["user"]["avatar"], me["user"]["name"]), ("sun:1", "테스터"))
 
             session_id = client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""}).json()["session_id"]
             client.post(f"/sessions/{session_id}/question")

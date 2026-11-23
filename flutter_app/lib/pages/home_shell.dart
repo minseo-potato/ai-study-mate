@@ -21,7 +21,7 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> refreshAccount() async {
     try {
       final data = await Api.request('GET', '/me') as Map<String, dynamic>;
-      if (mounted) setState(() => account = data);
+      if (mounted) setState(() => account = Api.account = data);
     } catch (_) {}
   }
 
@@ -47,10 +47,10 @@ class _HomeShellState extends State<HomeShell> {
   @override Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= wideBreakpoint;
     final pages = IndexedStack(index: tab, children: [
-      RoomListPage(demoMode: account['demo_mode'] == true, onChanged: refreshAccount),
+      RoomListPage(onChanged: refreshAccount),
       if (visited.contains(1)) RecordsPage(key: ValueKey('records$recordsVersion')) else const SizedBox.shrink(),
       if (visited.contains(2)) MyPage(key: ValueKey('my$myVersion'), account: account,
-        onChanged: (data) => setState(() => account = data), onSignOut: widget.onSignOut)
+        onChanged: (data) => setState(() => account = Api.account = data), onSignOut: widget.onSignOut)
       else const SizedBox.shrink(),
     ]);
     if (wide) {

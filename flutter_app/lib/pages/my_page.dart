@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../theme.dart';
+import '../widgets/avatar.dart';
 import '../widgets/common.dart';
 
 /// 마이페이지: 내 프로필과 학습 숫자, 앱 상태, 로그아웃.
@@ -14,18 +15,12 @@ class MyPage extends StatelessWidget {
   Map get stats => account['stats'] as Map;
 
   Future<void> rename(BuildContext context) async {
-    final controller = TextEditingController(text: '${user['name']}');
-    final name = await showDialog<String>(context: context, builder: (dialogContext) => AlertDialog(
-      title: const Text('이름 바꾸기'),
-      content: TextField(controller: controller, autofocus: true, maxLength: 20,
-        onSubmitted: (v) => Navigator.pop(dialogContext, v.trim())),
-      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('취소')),
-        FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()), child: const Text('저장'))],
-    ));
-    controller.dispose();
-    if (name == null || name.length < 2 || name == user['name']) return;
+    final edit = await showProfileEditor(context, title: '내 프로필', name: '${user['name']}',
+      avatar: userAvatar(user), nameMin: 2);
+    if (edit == null) return;
     try {
-      onChanged(await Api.request('PUT', '/me', {'name': name}) as Map<String, dynamic>);
+      onChanged(await Api.request('PUT', '/me', {
+        if (edit.name != user['name']) 'name': edit.name, 'avatar': edit.avatar.code}) as Map<String, dynamic>);
     } catch (e) { if (context.mounted) errorMessage(context, e); }
   }
 
@@ -55,16 +50,14 @@ class MyPage extends StatelessWidget {
         title: const Text('마이', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800))),
       body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 40), children: [
         Container(padding: const EdgeInsets.all(18), decoration: card, child: Row(children: [
-          Container(width: 56, height: 56, alignment: Alignment.center,
-            decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
-            child: Text(name.characters.first, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700))),
+          GestureDetector(onTap: () => rename(context), child: ProfileAvatar(userAvatar(user), size: 56)),
           const SizedBox(width: 14),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             if (joined != null) Padding(padding: const EdgeInsets.only(top: 2), child: Text(
               '${joined.year}년 ${joined.month}월 ${joined.day}일 가입', style: const TextStyle(fontSize: 12.5, color: mutedInk))),
           ])),
-          IconButton(tooltip: '이름 바꾸기', onPressed: () => rename(context), icon: const Icon(Icons.edit_outlined, color: mutedInk)),
+          IconButton(tooltip: '프로필 바꾸기', onPressed: () => rename(context), icon: const Icon(Icons.edit_outlined, color: mutedInk)),
         ])),
         const SizedBox(height: 10),
         Container(padding: const EdgeInsets.symmetric(vertical: 18), decoration: card, child: Row(children: [
@@ -75,12 +68,6 @@ class MyPage extends StatelessWidget {
         ])),
         const SectionTitle('설정'),
         Container(decoration: card, clipBehavior: Clip.antiAlias, child: Column(children: [
-          ListTile(
-            leading: Icon(account['demo_mode'] == true ? Icons.science_outlined : Icons.bolt_rounded, color: brand),
-            title: Text(account['demo_mode'] == true ? '체험 모드' : '실제 AI 연결됨', style: const TextStyle(fontSize: 15)),
-            subtitle: Text(account['demo_mode'] == true ? 'AI 키 없이 미리 정해 둔 답으로 대화해요' : 'AI 친구들이 실시간으로 답해요',
-              style: const TextStyle(fontSize: 12.5, color: mutedInk))),
-          const Divider(height: 1, indent: 56),
           ListTile(leading: const Icon(Icons.logout_rounded, color: Color(0xFFE03131)),
             title: const Text('로그아웃', style: TextStyle(fontSize: 15, color: Color(0xFFE03131))),
             onTap: () => confirmSignOut(context)),
