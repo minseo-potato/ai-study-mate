@@ -12,7 +12,11 @@ class SessionPage extends StatefulWidget {
   final int id;
   final String? studyTitle;
   final Future<void> Function()? onFinished;
-  const SessionPage({super.key, required this.id, this.studyTitle, this.onFinished});
+  /// 채팅방에서 이미 받아 온 대화가 있으면 다시 요청하지 않고 바로 그린다.
+  final Map<String, dynamic>? initial;
+  final List<Map<String, dynamic>>? initialHistory;
+  const SessionPage({super.key, required this.id, this.studyTitle, this.onFinished,
+    this.initial, this.initialHistory});
   @override State<SessionPage> createState() => _SessionPageState();
 }
 class _SessionPageState extends State<SessionPage> {
@@ -27,11 +31,23 @@ class _SessionPageState extends State<SessionPage> {
   final sessionScaffoldKey = GlobalKey<ScaffoldState>();
   /// 채팅방 모드에서는 지난 주차 대화까지 한 화면에 이어서 보여준다.
   bool get continuous => widget.onFinished != null;
-  int get typingPeer {
+  List get members => (session?['members'] as List?) ?? [];
+  Map? memberOf(int? no) => no == null ? null
+    : members.cast<Map?>().firstWhere((m) => m?['member_no'] == no, orElse: () => null);
+  Map? get typingMember {
     final messages = (session?['messages'] as List?) ?? [];
-    return messages.isEmpty ? 1 : (messages.last['member_no'] as int? ?? 1);
+    final no = messages.isEmpty ? null : messages.last['member_no'] as int?;
+    return memberOf(no) ?? (members.isEmpty ? null : members.first as Map);
   }
-  @override void initState() { super.initState(); refresh(withHistory: true); }
+  @override void initState() {
+    super.initState();
+    if (widget.initial != null) {
+      history = widget.initialHistory ?? [];
+      WidgetsBinding.instance.addPostFrameCallback((_) => show(widget.initial!, jump: true));
+    } else {
+      refresh(withHistory: true);
+    }
+  }
   @override void dispose() {
     answer.dispose(); revised.dispose(); scrollController.dispose(); answerFocus.dispose(); super.dispose();
   }
@@ -46,26 +62,31 @@ class _SessionPageState extends State<SessionPage> {
   void focusAnswer() => WidgetsBinding.instance.addPostFrameCallback((_) {
     if (mounted && session?['status'] == 'active') answerFocus.requestFocus();
   });
-  Future<void> loadHistory(int studyId) async {
-    final items = await Api.request('GET', '/studies/$studyId/history') as List<dynamic>;
-    if (mounted) {
-      setState(() => history = items.map((e) => Map<String, dynamic>.from(e as Map))
-        .where((e) => e['id'] != widget.id).toList());
-    }
-  }
   Future<void> refresh({bool withHistory = false}) async {
     try {
-      final data = await Api.request('GET', '/sessions/${widget.id}');
-      if (withHistory && continuous) await loadHistory(data['study_id'] as int);
-      if (!mounted) return;
-      setState(() => session = data);
-      scrollToLatest(animate: !withHistory);
-      final messages = data['messages'] as List;
-      if (data['status'] == 'active' && !busy &&
-          (messages.isEmpty || messages.last['role'] == 'assistant_reaction' || messages.last['role'] == 'user')) {
-        await act('question');
-      } else { focusAnswer(); }
+      // 지난 대화가 필요하면 지금 대화와 동시에 요청한다.
+      final known = session?['study_id'];
+      final sessionRequest = Api.request('GET', '/sessions/${widget.id}');
+      final historyRequest = withHistory && continuous && known != null
+        ? Api.request('GET', '/studies/$known/history') : null;
+      final data = await sessionRequest as Map<String, dynamic>;
+      if (withHistory && continuous) {
+        final items = await (historyRequest ?? Api.request('GET', '/studies/${data['study_id']}/history')) as List;
+        history = items.map((e) => Map<String, dynamic>.from(e as Map)).where((e) => e['id'] != widget.id).toList();
+      }
+      await show(data, jump: withHistory);
     } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  /// 받은 대화를 그리고, 스터디원이 말할 차례면 다음 질문을 받아 온다.
+  Future<void> show(Map<String, dynamic> data, {bool jump = false}) async {
+    if (!mounted) return;
+    setState(() => session = data);
+    scrollToLatest(animate: !jump);
+    final messages = data['messages'] as List;
+    if (data['status'] == 'active' && !busy &&
+        (messages.isEmpty || messages.last['role'] == 'assistant_reaction' || messages.last['role'] == 'user')) {
+      await act('question');
+    } else { focusAnswer(); }
   }
   Future<bool> act(String path, [Map<String, dynamic>? body]) async {
     setState(() { busy = true; busyAction = path; });
@@ -136,6 +157,42 @@ class _SessionPageState extends State<SessionPage> {
       LearningJourneyPage(studyId: session!['study_id'] as int)));
     if (mounted) await refresh();
   }
+  /// AI 스터디원 프로필(이름·학습 단계) 바꾸기.
+  Future<void> editMember(Map member) async {
+    final name = TextEditingController(text: memberName(member));
+    var level = '${member['level']}';
+    final role = peerRole(member);
+    final saved = await showAdaptiveSheet<bool>(context, (sheetContext) => StatefulBuilder(
+      builder: (sheetContext, setSheet) => Column(mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            PeerAvatar({...member, 'name': name.text}, size: 48), const SizedBox(width: 14),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(peerRoleLabels[role], style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(peerRoleIntros[role], style: const TextStyle(fontSize: 13, color: mutedInk)),
+            ])),
+          ]),
+          const SizedBox(height: 20),
+          TextField(controller: name, maxLength: 12, onChanged: (_) => setSheet(() {}),
+            decoration: const InputDecoration(labelText: '이름')),
+          const SizedBox(height: 4),
+          const Text('학습 단계', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: subInk)),
+          const SizedBox(height: 8),
+          LevelPicker(value: level, onChanged: (v) => setSheet(() => level = v)),
+          const SizedBox(height: 20),
+          FilledButton(onPressed: name.text.trim().isEmpty ? null : () => Navigator.pop(sheetContext, true),
+            child: const Text('저장')),
+        ])));
+    final newName = name.text.trim();
+    name.dispose();
+    if (saved != true || !mounted) return;
+    try {
+      await Api.request('PUT', '/studies/${session!['study_id']}/members/${member['member_no']}',
+        {'name': newName, 'level': level});
+      await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
   Future<void> togglePrevious(bool value) async {
     final current = session!['week'] as Map<String, dynamic>;
     try {
@@ -180,11 +237,11 @@ class _SessionPageState extends State<SessionPage> {
     }
     for (final m in messages) {
       final mine = m['role'] == 'user';
-      final peer = mine ? null : m['member_no'] as int?;
+      final peer = mine ? null : memberOf(m['member_no'] as int?);
       final tag = m['role'] == 'assistant_hint' ? ' · 힌트' : m['role'] == 'assistant_plan' ? ' · 계획 반영' : '';
-      add(mine ? 'me' : 'peer$peer$tag', (g) => ChatBubble(
-        name: mine ? '나' : '${peerLabel(peer ?? 1)}$tag',
-        text: '${m['body']}', mine: mine, peerNo: peer, grouped: g,
+      add(mine ? 'me' : 'peer${m['member_no']}$tag', (g) => ChatBubble(
+        name: mine ? '나' : '${peer == null ? 'AI 친구' : memberName(peer)}$tag',
+        text: '${m['body']}', mine: mine, member: peer, grouped: g,
         caption: m['page_no'] == null ? null : '교안 ${m['page_no']}쪽',
         onCaptionTap: m['page_no'] == null ? null : () => showSource(sid, m['id'] as int)));
     }
@@ -223,29 +280,32 @@ class _SessionPageState extends State<SessionPage> {
             const SizedBox(width: 8),
             Expanded(child: Text('${week['title']}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
           ]),
-          const SizedBox(height: 8),
-          Text('${week['scope']}', style: const TextStyle(height: 1.5, color: Color(0xFF3A3D44))),
+          if ('${week['scope']}'.trim() != '${week['title']}'.trim()) ...[
+            const SizedBox(height: 8),
+            Text('${week['scope']}', style: const TextStyle(height: 1.5, color: subInk)),
+          ],
           const SizedBox(height: 10),
           Row(children: [
             const Icon(Icons.event_outlined, size: 16, color: mutedInk), const SizedBox(width: 6),
-            Text('모임 ${week['meeting_date']}', style: const TextStyle(fontSize: 13, color: mutedInk)),
+            Text('모임 ${friendlyDate('${week['meeting_date']}')}', style: const TextStyle(fontSize: 13, color: mutedInk)),
           ]),
         ]),
         InfoSection(title: '스터디원 ${members.length + 1}', children: [
-          for (final m in members) Padding(padding: const EdgeInsets.only(bottom: 12), child: Row(children: [
-            PeerAvatar(m['member_no'] as int, size: 38), const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(peerLabel(m['member_no'] as int), style: const TextStyle(fontWeight: FontWeight.w600)),
-              Text('${m['perspective']} · ${m['level']}', style: const TextStyle(fontSize: 12.5, color: mutedInk)),
-            ])),
+          for (final m in members) InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: busy ? null : () => editMember(m as Map),
+            child: Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Row(children: [
+              PeerAvatar(m as Map, size: 38), const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(memberName(m), style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text('${memberRoleLabel(m)} · ${m['level']}', style: const TextStyle(fontSize: 12.5, color: mutedInk)),
+              ])),
+              const Icon(Icons.edit_outlined, size: 18, color: mutedInk),
+            ]))),
+          const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Row(children: [
+            MyAvatar(size: 38), SizedBox(width: 12),
+            Text('나', style: TextStyle(fontWeight: FontWeight.w600)),
           ])),
-          Row(children: [
-            Container(width: 38, height: 38, alignment: Alignment.center,
-              decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
-              child: const Text('나', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700))),
-            const SizedBox(width: 12),
-            const Text('나', style: TextStyle(fontWeight: FontWeight.w600)),
-          ]),
         ]),
         InfoSection(title: '교안', children: [
           InkWell(onTap: busy ? null : () { close(); attachPdf(); }, borderRadius: BorderRadius.circular(12),
@@ -367,7 +427,7 @@ class _SessionPageState extends State<SessionPage> {
               for (final past in history) ...sessionBlock(past),
               ...sessionBlock(s),
               if (pendingText != null) ChatBubble(name: '나', text: pendingText!, mine: true),
-              if (thinking) TypingBubble(peer: typingPeer),
+              if (thinking) TypingBubble(member: typingMember),
               const SizedBox(height: 16),
             ]))),
         ])),

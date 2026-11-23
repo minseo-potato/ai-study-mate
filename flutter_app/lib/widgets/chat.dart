@@ -2,15 +2,27 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../theme.dart';
 
+/// AI 스터디원 프로필: 역할 색 동그라미에 이름 첫 글자.
 class PeerAvatar extends StatelessWidget {
-  final int number;
+  final Map member;
   final double size;
-  const PeerAvatar(this.number, {super.key, this.size = 36});
-  @override Widget build(BuildContext context) => Container(width: size, height: size,
-    alignment: Alignment.center,
-    decoration: BoxDecoration(shape: BoxShape.circle, color: peerAccent(number)),
-    child: Text(peerLabel(number).characters.first, style: TextStyle(color: Colors.white,
-      fontWeight: FontWeight.w700, fontSize: size * 0.42)));
+  const PeerAvatar(this.member, {super.key, this.size = 36});
+  @override Widget build(BuildContext context) {
+    final name = memberName(member);
+    return Container(width: size, height: size, alignment: Alignment.center,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: memberAccent(member)),
+      child: Text(name.characters.first, style: TextStyle(color: Colors.white,
+        fontWeight: FontWeight.w700, fontSize: size * 0.42)));
+  }
+}
+
+/// 내 프로필.
+class MyAvatar extends StatelessWidget {
+  final double size;
+  const MyAvatar({super.key, this.size = 36});
+  @override Widget build(BuildContext context) => Container(width: size, height: size, alignment: Alignment.center,
+    decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
+    child: Text('나', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: size * 0.38)));
 }
 
 class ChatBubble extends StatelessWidget {
@@ -19,11 +31,11 @@ class ChatBubble extends StatelessWidget {
   final bool mine;
   final String? caption;
   final VoidCallback? onCaptionTap;
-  final int? peerNo;
+  final Map? member;
   /// 같은 사람이 이어서 말하면 이름과 프로필을 한 번만 보여준다.
   final bool grouped;
   const ChatBubble({super.key, required this.name, required this.text, required this.mine,
-    this.caption, this.onCaptionTap, this.peerNo, this.grouped = false});
+    this.caption, this.onCaptionTap, this.member, this.grouped = false});
   @override Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final radius = BorderRadius.only(
@@ -40,7 +52,7 @@ class ChatBubble extends StatelessWidget {
         child: Padding(padding: EdgeInsets.only(top: grouped ? 3 : 12), child: Row(
           mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             if (!mine) ...[
-              grouped ? const SizedBox(width: 36) : PeerAvatar(peerNo ?? 1),
+              grouped || member == null ? const SizedBox(width: 36) : PeerAvatar(member!),
               const SizedBox(width: 8),
             ],
             Flexible(child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -128,12 +140,13 @@ class StudySummaryCard extends StatelessWidget {
 
 /// 스터디원이 답을 쓰는 중일 때 보이는 말풍선.
 class TypingBubble extends StatelessWidget {
-  final int peer;
-  const TypingBubble({super.key, required this.peer});
+  final Map? member;
+  const TypingBubble({super.key, this.member});
   @override Widget build(BuildContext context) => Align(alignment: Alignment.centerLeft, child: Padding(
     padding: const EdgeInsets.only(top: 12),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
-      PeerAvatar(peer), const SizedBox(width: 8),
+      if (member != null) PeerAvatar(member!) else const SizedBox(width: 36),
+      const SizedBox(width: 8),
       Container(padding: const EdgeInsets.all(14),
         decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.all(Radius.circular(18)),
           boxShadow: [BoxShadow(color: Color(0x0F000000), blurRadius: 3, offset: Offset(0, 1))]),
@@ -150,7 +163,7 @@ class MemberStack extends StatelessWidget {
     return SizedBox(width: 22.0 * shown.length + 14, height: 36, child: Stack(children: [
       for (var i = 0; i < shown.length; i++) Positioned(left: 22.0 * i, top: 0, child: Container(
         padding: const EdgeInsets.all(2), decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-        child: PeerAvatar(shown[i]['member_no'] as int, size: 32))),
+        child: PeerAvatar(shown[i] as Map, size: 32))),
     ]));
   }
 }

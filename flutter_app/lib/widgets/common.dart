@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../theme.dart';
 
 class PageContent extends StatelessWidget {
   final List<Widget> children;
@@ -14,18 +15,10 @@ class SectionTitle extends StatelessWidget {
   final String? detail;
   const SectionTitle(this.title, {super.key, this.detail});
   @override Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(2, 24, 2, 10), child: Row(children: [
-      Text(title, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-      if (detail != null) ...[const Spacer(), Text(detail!, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))],
+    padding: const EdgeInsets.fromLTRB(4, 28, 4, 10), child: Row(children: [
+      Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: ink)),
+      if (detail != null) ...[const Spacer(), Text(detail!, style: const TextStyle(fontSize: 13, color: mutedInk))],
     ]));
-}
-
-class SoftPanel extends StatelessWidget {
-  final Widget child;
-  final Color? color;
-  const SoftPanel({super.key, required this.child, this.color});
-  @override Widget build(BuildContext context) => Card(color: color,
-    child: Padding(padding: const EdgeInsets.all(18), child: child));
 }
 
 void errorMessage(BuildContext context, Object e) {
@@ -34,12 +27,6 @@ void errorMessage(BuildContext context, Object e) {
     : e.toString().replaceFirst(RegExp(r'^Exception: '), '');
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }
-
-String weekStatusLabel(String status) => switch (status) {
-  'complete' => '완료',
-  'in_progress' => '진행 중',
-  _ => '시작 전',
-};
 
 /// 휴대폰에서는 아래에서 올라오는 시트, 넓은 화면에서는 가운데 대화상자로 연다.
 Future<T?> showAdaptiveSheet<T>(BuildContext context, WidgetBuilder builder) {
@@ -57,4 +44,32 @@ Future<T?> showAdaptiveSheet<T>(BuildContext context, WidgetBuilder builder) {
       padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.viewInsetsOf(sheetContext).bottom + 24),
       child: ConstrainedBox(constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.75),
         child: builder(sheetContext))));
+}
+
+/// 기초·중급·심화 중 하나를 고르는 알약 모양 선택기.
+class LevelPicker extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+  final bool compact;
+  const LevelPicker({super.key, required this.value, required this.onChanged, this.compact = false});
+  @override Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(3),
+    decoration: BoxDecoration(color: pageBg, borderRadius: BorderRadius.circular(12)),
+    child: Row(mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max, children: [
+      for (final level in peerLevels) _segment(level),
+    ]));
+  Widget _segment(String level) {
+    final selected = level == value;
+    final child = GestureDetector(
+      onTap: () => onChanged(level),
+      child: AnimatedContainer(duration: const Duration(milliseconds: 150),
+        padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 0, vertical: compact ? 6 : 9),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: selected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+          boxShadow: selected ? const [BoxShadow(color: Color(0x14000000), blurRadius: 4, offset: Offset(0, 1))] : null),
+        child: Text(level, style: TextStyle(fontSize: compact ? 12.5 : 14,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: selected ? ink : mutedInk))));
+    return compact ? child : Expanded(child: child);
+  }
 }

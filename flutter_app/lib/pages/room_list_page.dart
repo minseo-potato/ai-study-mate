@@ -9,22 +9,27 @@ import 'study_page.dart';
 
 /// 첫 화면: 메신저 채팅 목록처럼 스터디 채팅방을 모아 보여주고, 누르면 채팅방 페이지로 들어간다.
 class RoomListPage extends StatefulWidget {
-  const RoomListPage({super.key});
+  final bool demoMode;
+  /// 방을 만들거나 지우면 마이페이지 숫자도 새로 고치도록 알린다.
+  final VoidCallback? onChanged;
+  const RoomListPage({super.key, this.demoMode = false, this.onChanged});
   @override State<RoomListPage> createState() => _RoomListPageState();
 }
 class _RoomListPageState extends State<RoomListPage> {
   final search = TextEditingController();
   List<dynamic> studies = [];
-  bool loading = true, demoMode = false, searching = false, showArchived = false;
+  bool loading = true, searching = false, showArchived = false;
+  /// 편집 모드에서 고른 채팅방 id. null이면 편집 모드가 아니다.
+  Set<int>? selected;
+  bool get editing => selected != null;
   String? loadError;
   @override void initState() { super.initState(); refresh(); }
   @override void dispose() { search.dispose(); super.dispose(); }
   Future<void> refresh() async {
     if (studies.isEmpty) setState(() { loading = true; loadError = null; });
     try {
-      final health = await Api.request('GET', '/health');
       final items = await Api.request('GET', '/studies') as List<dynamic>;
-      if (mounted) setState(() { studies = items; demoMode = health['demo_mode'] == true; loadError = null; });
+      if (mounted) setState(() { studies = items; loadError = null; });
     } catch (e) { if (mounted) { setState(() { loadError = e is http.ClientException
       ? '서버에 연결할 수 없어요. 서버를 켜고 다시 시도해 주세요.' : '$e'; }); } }
     finally { if (mounted) setState(() => loading = false); }
@@ -37,6 +42,7 @@ class _RoomListPageState extends State<RoomListPage> {
   Future<void> createRoom() async {
     final id = await Navigator.push<int>(context, MaterialPageRoute(builder: (_) => const CreatePage()));
     if (id == null || !mounted) return;
+    widget.onChanged?.call();
     await refresh();
     final room = studies.firstWhere((s) => s['id'] == id, orElse: () => null);
     if (room != null && mounted) await enterRoom(room);
@@ -67,6 +73,35 @@ class _RoomListPageState extends State<RoomListPage> {
       if (mounted) await refresh();
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
+  /// 편집 모드에서 고른 방들을 한꺼번에 보관하거나 되살린다.
+  Future<void> archiveSelected(bool archived) async {
+    final ids = selected!.toList();
+    try {
+      await Future.wait(ids.map((id) => Api.request('PUT', '/studies/$id/details', {'archived': archived})));
+      setState(() => selected = null);
+      await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  Future<void> deleteSelected() async {
+    final ids = selected!.toList();
+    final ok = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
+      title: Text('채팅방 ${ids.length}개를 삭제할까요?'),
+      content: const Text('대화와 기록이 모두 지워지고 되돌릴 수 없어요.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('취소')),
+        FilledButton(style: FilledButton.styleFrom(backgroundColor: const Color(0xFFE03131)),
+          onPressed: () => Navigator.pop(dialogContext, true), child: const Text('삭제'))],
+    ));
+    if (ok != true) return;
+    try {
+      await Future.wait(ids.map((id) => Api.request('DELETE', '/studies/$id')));
+      setState(() => selected = null);
+      widget.onChanged?.call();
+      await refresh();
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+  void toggle(int id) => setState(() {
+    selected!.contains(id) ? selected!.remove(id) : selected!.add(id);
+  });
   Future<void> openPlan(dynamic room) async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => StudyPage(id: room['id'] as int)));
     if (mounted) refresh();
@@ -113,11 +148,16 @@ class _RoomListPageState extends State<RoomListPage> {
     final archived = room['archived'] == 1;
     final week = room['current_week'];
     final accent = peerAccents[(room['id'] as int) % peerAccents.length];
+    final id = room['id'] as int;
+    final checked = selected?.contains(id) ?? false;
     return InkWell(
-      onTap: () => enterRoom(room),
-      onLongPress: () => roomMenu(room),
-      onSecondaryTap: () => roomMenu(room),
+      onTap: editing ? () => toggle(id) : () => enterRoom(room),
+      onLongPress: editing ? null : () => roomMenu(room),
+      onSecondaryTap: editing ? null : () => roomMenu(room),
       child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10), child: Row(children: [
+        if (editing) Padding(padding: const EdgeInsets.only(right: 14), child: Icon(
+          checked ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+          color: checked ? brand : const Color(0xFFC5C8CE))),
         Opacity(opacity: archived ? 0.5 : 1, child: Container(width: 52, height: 52, alignment: Alignment.center,
           decoration: BoxDecoration(color: accent.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(19)),
           child: Text(title.isEmpty ? '?' : title.characters.first,
@@ -136,7 +176,7 @@ class _RoomListPageState extends State<RoomListPage> {
           Text(preview(room), maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 13.5, color: Color(0xFF6B6F77))),
         ])),
-        if (week != null) Padding(padding: const EdgeInsets.only(left: 12), child: Column(
+        if (week != null && !editing) Padding(padding: const EdgeInsets.only(left: 12), child: Column(
           crossAxisAlignment: CrossAxisAlignment.end, children: [
           Text(shortDate('${week['meeting_date']}'), style: const TextStyle(fontSize: 12, color: mutedInk)),
           const SizedBox(height: 6),
@@ -177,23 +217,40 @@ class _RoomListPageState extends State<RoomListPage> {
         ...activeRooms.map(roomTile),
         if (activeRooms.isEmpty && query.isNotEmpty) const Padding(padding: EdgeInsets.all(32),
           child: Center(child: Text('찾는 채팅방이 없어요', style: TextStyle(color: mutedInk)))),
-        if (archivedRooms.isNotEmpty) Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            initiallyExpanded: showArchived, onExpansionChanged: (value) => showArchived = value,
-            tilePadding: const EdgeInsets.symmetric(horizontal: 20),
-            title: Text('보관함 ${archivedRooms.length}', style: const TextStyle(fontSize: 13, color: mutedInk)),
-            children: archivedRooms.map(roomTile).toList())),
+        if (archivedRooms.isNotEmpty) ...[
+          Padding(padding: const EdgeInsets.fromLTRB(12, 8, 12, 0), child: Align(alignment: Alignment.centerLeft,
+            child: TextButton.icon(onPressed: () => setState(() => showArchived = !showArchived),
+              style: TextButton.styleFrom(foregroundColor: mutedInk),
+              icon: Icon(showArchived ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18),
+              label: Text('보관함 ${archivedRooms.length}', style: const TextStyle(fontSize: 13))))),
+          if (showArchived || editing) ...archivedRooms.map(roomTile),
+        ],
       ]));
     }
-    return ColoredBox(color: const Color(0xFFF4F5F7), child: Center(child: ConstrainedBox(
+    final chosen = studies.where((s) => selected?.contains(s['id']) ?? false).toList();
+    final allArchived = chosen.isNotEmpty && chosen.every((s) => s['archived'] == 1);
+    return ColoredBox(color: pageBg, child: Center(child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: chatMaxWidth), child: Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
+      appBar: editing ? AppBar(
+        shape: const Border(),
+        leading: IconButton(tooltip: '편집 끝내기', icon: const Icon(Icons.close_rounded),
+          onPressed: () => setState(() => selected = null)),
+        title: Text(selected!.isEmpty ? '채팅방 선택' : '${selected!.length}개 선택',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        actions: [
+          TextButton(onPressed: () => setState(() {
+            final ids = studies.map((s) => s['id'] as int).toSet();
+            selected = selected!.length == ids.length ? <int>{} : ids;
+          }), child: Text(selected!.length == studies.length ? '선택 해제' : '전체 선택')),
+          const SizedBox(width: 8),
+        ],
+      ) : AppBar(
         titleSpacing: 20,
         shape: const Border(),
         title: Row(children: [
           const Text('채팅', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-          if (demoMode) Container(margin: const EdgeInsets.only(left: 8),
+          if (widget.demoMode) Container(margin: const EdgeInsets.only(left: 8),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(8)),
             child: const Text('체험 모드', style: TextStyle(fontSize: 11, color: brand, fontWeight: FontWeight.w600))),
@@ -202,11 +259,26 @@ class _RoomListPageState extends State<RoomListPage> {
           if (studies.length > 1) IconButton(tooltip: '검색', isSelected: searching,
             icon: const Icon(Icons.search_rounded), selectedIcon: const Icon(Icons.close_rounded),
             onPressed: () => setState(() { searching = !searching; if (!searching) search.clear(); })),
+          if (studies.isNotEmpty) IconButton(tooltip: '편집', icon: const Icon(Icons.checklist_rounded),
+            onPressed: () => setState(() { selected = <int>{}; searching = false; search.clear(); })),
           IconButton(tooltip: '새 스터디', onPressed: createRoom, icon: const Icon(Icons.add_comment_outlined)),
           const SizedBox(width: 8),
         ],
       ),
       body: body,
+      bottomNavigationBar: !editing ? null : Container(
+        decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: lineColor))),
+        child: SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 10), child: Row(children: [
+          Expanded(child: OutlinedButton.icon(
+            onPressed: chosen.isEmpty ? null : () => archiveSelected(!allArchived),
+            icon: Icon(allArchived ? Icons.unarchive_outlined : Icons.archive_outlined, size: 18),
+            label: Text(allArchived ? '다시 사용' : '보관'))),
+          const SizedBox(width: 10),
+          Expanded(child: FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFE03131)),
+            onPressed: chosen.isEmpty ? null : deleteSelected,
+            icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('삭제'))),
+        ])))),
     ))));
   }
 }

@@ -49,14 +49,39 @@ CREATE TABLE IF NOT EXISTS review_items (
  resolved_at TEXT, UNIQUE(study_id,question)
 );
 CREATE INDEX IF NOT EXISTS review_items_study_status ON review_items(study_id,status);
+CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id,id);
+CREATE INDEX IF NOT EXISTS sessions_study ON sessions(study_id,status,week_no);
+CREATE TABLE IF NOT EXISTS users (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+ password_hash TEXT NOT NULL, salt TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_tokens (
+ token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at TEXT NOT NULL
+);
 """
+
+# 테이블 생성·컬럼 추가는 DB 파일마다 서버가 켜진 뒤 처음 연결할 때 한 번만 한다.
+_migrated: set[str] = set()
 
 
 @contextmanager
 def connect():
-    db = sqlite3.connect(os.getenv("DATABASE_PATH", "study_mate.sqlite3"))
+    path = os.getenv("DATABASE_PATH", "study_mate.sqlite3")
+    db = sqlite3.connect(path, timeout=10)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
+    if path not in _migrated:
+        migrate(db)
+        db.commit()
+        _migrated.add(path)
+    try:
+        yield db
+        db.commit()
+    finally:
+        db.close()
+
+
+def migrate(db):
     db.executescript(SCHEMA)
     study_columns = {row["name"] for row in db.execute("PRAGMA table_info(studies)")}
     if "pinned" not in study_columns:
@@ -81,11 +106,9 @@ def connect():
                 if isinstance(question, str) and question.strip():
                     db.execute("INSERT OR IGNORE INTO review_items(study_id,question,source_week) VALUES(?,?,?)",
                                (session["study_id"], question.strip(), session["week_no"]))
-    try:
-        yield db
-        db.commit()
-    finally:
-        db.close()
+    if "user_id" not in study_columns:
+        db.execute("ALTER TABLE studies ADD COLUMN user_id INTEGER")
+    db.execute("CREATE INDEX IF NOT EXISTS studies_user ON studies(user_id,archived)")
 
 
 def obj(row):

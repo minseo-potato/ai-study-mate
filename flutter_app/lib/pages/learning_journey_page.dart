@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
+import '../theme.dart';
 import '../widgets/common.dart';
 
+/// 복습·성장 기록: 숫자 요약, 다시 볼 내용 체크, 주차별 정리.
 class LearningJourneyPage extends StatefulWidget {
   final int studyId;
   const LearningJourneyPage({super.key, required this.studyId});
@@ -10,7 +12,7 @@ class LearningJourneyPage extends StatefulWidget {
 class _LearningJourneyPageState extends State<LearningJourneyPage> {
   Map<String, dynamic>? report;
   List<dynamic> reviews = [];
-  bool busy = false;
+  bool busy = false, showDone = false;
   @override void initState() { super.initState(); refresh(); }
   Future<void> refresh() async {
     try {
@@ -29,76 +31,105 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
   }
-  Widget stat(int value, String label, IconData icon) => Expanded(child: SoftPanel(
-    child: Column(children: [Icon(icon, color: const Color(0xFF7C5CFC), size: 20),
-      const SizedBox(height: 6), Text('$value', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-      Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF8B8F97))),
-    ])));
-  Widget noteBlock(String label, String value, Color color) => Container(
-    width: double.infinity, padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(14)),
+
+  BoxDecoration get cardDecoration => BoxDecoration(color: Colors.white,
+    borderRadius: BorderRadius.circular(18), border: Border.all(color: lineColor));
+
+  Widget stat(int value, String label) => Expanded(child: Column(children: [
+    Text('$value', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: ink)),
+    const SizedBox(height: 2),
+    Text(label, style: const TextStyle(fontSize: 12, color: mutedInk)),
+  ]));
+
+  Widget reviewRow(dynamic item, bool done) => InkWell(
+    onTap: busy ? null : () => setResolved(item, !done),
+    child: Padding(padding: const EdgeInsets.fromLTRB(14, 12, 16, 12), child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(done ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+          size: 22, color: done ? brand : const Color(0xFFC5C8CE)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${item['question']}', style: TextStyle(height: 1.45, fontSize: 14.5,
+            color: done ? mutedInk : ink, decoration: done ? TextDecoration.lineThrough : null)),
+          const SizedBox(height: 3),
+          Text('${item['source_week']}주차', style: const TextStyle(fontSize: 12, color: mutedInk)),
+        ])),
+      ])));
+
+  Widget note(String label, String value, Color color) => Container(
+    width: double.infinity, padding: const EdgeInsets.all(12), margin: const EdgeInsets.only(top: 10),
+    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-      const SizedBox(height: 7), Text(value.trim().isEmpty ? '작성한 내용이 없어요.' : value,
-        style: const TextStyle(height: 1.5)),
+      Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: subInk)),
+      const SizedBox(height: 4),
+      Text(value, style: const TextStyle(height: 1.5, fontSize: 14)),
     ]));
+
+  Widget weekCard(Map week) {
+    final summary = '${week['summary'] ?? ''}'.trim();
+    final baseline = '${week['baseline_text'] ?? ''}'.trim();
+    final revised = '${week['revised_note'] ?? ''}'.trim();
+    return Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(16), decoration: cardDecoration,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(8)),
+            child: Text('${week['week_no']}주차', style: const TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w700))),
+          const SizedBox(width: 8),
+          Expanded(child: Text('${week['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
+          Text('질문 ${week['question_count']} · 답변 ${week['answer_count']}',
+            style: const TextStyle(fontSize: 12, color: mutedInk)),
+        ]),
+        if (summary.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10),
+          child: Text(summary, style: const TextStyle(height: 1.55, color: ink))),
+        if (baseline.isNotEmpty) note('${week['baseline_label']}', baseline, pageBg),
+        if (revised.isNotEmpty) note('마치며 다시 정리', revised, const Color(0xFFEFFAF5)),
+      ]));
+  }
+
+  Widget empty(String text) => Container(padding: const EdgeInsets.symmetric(vertical: 22), decoration: cardDecoration,
+    alignment: Alignment.center, child: Text(text, style: const TextStyle(color: mutedInk)));
+
   @override Widget build(BuildContext context) {
     final data = report;
     final open = reviews.where((r) => r['status'] == 'open').toList();
     final done = reviews.where((r) => r['status'] == 'done').toList();
-    final weeks = (data?['weeks'] as List?) ?? [];
-    return Scaffold(appBar: AppBar(title: const Text('학습 성장 기록')),
+    final weeks = ((data?['weeks'] as List?) ?? []).where((w) => w['status'] == 'complete').toList();
+    return Scaffold(appBar: AppBar(title: const Text('복습·성장 기록')),
       body: data == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
-        SoftPanel(color: const Color(0xFFF6F4FF), child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${data['title']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 5), Text('${data['goal']}'),
+        Container(margin: const EdgeInsets.only(top: 4), padding: const EdgeInsets.symmetric(vertical: 18),
+          decoration: cardDecoration, child: Row(children: [
+            stat(data['completed_weeks'] as int, '완료한 주차'),
+            Container(width: 1, height: 32, color: lineColor),
+            stat(data['answer_count'] as int, '내 답변'),
+            Container(width: 1, height: 32, color: lineColor),
+            stat(data['open_reviews'] as int, '남은 복습'),
+          ])),
+        SectionTitle('다시 볼 내용', detail: open.isEmpty ? null : '${open.length}개'),
+        if (open.isEmpty) empty('남은 복습이 없어요')
+        else Container(decoration: cardDecoration, clipBehavior: Clip.antiAlias, child: Column(children: [
+          for (var i = 0; i < open.length; i++) ...[
+            if (i > 0) const Divider(height: 1, indent: 48),
+            reviewRow(open[i], false),
+          ],
         ])),
-        Row(children: [
-          stat(data['completed_weeks'] as int, '완료한 주차', Icons.calendar_today_outlined),
-          stat(data['answer_count'] as int, '답한 횟수', Icons.chat_bubble_outline),
-          stat(data['open_reviews'] as int, '남은 복습', Icons.bookmark_outline),
-        ]),
-        SectionTitle('다시 볼 내용', detail: '${open.length}개 남음'),
-        if (open.isEmpty) const SoftPanel(child: Text('지금 남아 있는 복습 항목이 없어요.')),
-        ...open.map((item) => Card(child: CheckboxListTile(
-          value: false, onChanged: busy ? null : (_) => setResolved(item, true),
-          title: Text('${item['question']}'),
-          subtitle: Text('${item['source_week']}주차'),
-          controlAffinity: ListTileControlAffinity.leading))),
-        if (done.isNotEmpty) ExpansionTile(title: Text('완료한 복습 ${done.length}개'),
-          children: done.map((item) => CheckboxListTile(
-            value: true, onChanged: busy ? null : (_) => setResolved(item, false),
-            title: Text('${item['question']}'),
-            controlAffinity: ListTileControlAffinity.leading)).toList()),
-        const SectionTitle('주차별 설명의 변화'),
-        if (weeks.every((w) => w['status'] != 'complete'))
-          const SoftPanel(child: Text('아직 완료한 주차가 없어요.')),
-        ...weeks.where((w) => w['status'] == 'complete').map((week) => Card(
-          child: Padding(padding: const EdgeInsets.all(18), child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('${week['week_no']}주차 · ${week['title']}',
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 5),
-            Text('질문 ${week['question_count']}개 · 답변 ${week['answer_count']}개',
-              style: const TextStyle(color: Color(0xFF8B8F97), fontSize: 12)),
-            const SizedBox(height: 14),
-            LayoutBuilder(builder: (context, constraints) => constraints.maxWidth >= 460
-              ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Expanded(child: noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF6F7F9))),
-                  const SizedBox(width: 10),
-                  Expanded(child: noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEFFAF5))),
-                ])
-              : Column(children: [
-                  noteBlock('${week['baseline_label']}', '${week['baseline_text']}', const Color(0xFFF6F7F9)),
-                  const SizedBox(height: 10),
-                  noteBlock('대화 뒤 다시 정리', '${week['revised_note']}', const Color(0xFFEFFAF5)),
-                ])),
-            if ('${week['summary']}'.isNotEmpty) ...[
-              const SizedBox(height: 14), Text('스터디 기록 · ${week['summary']}',
-                style: const TextStyle(height: 1.5)),
+        if (done.isNotEmpty) ...[
+          Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+            onPressed: () => setState(() => showDone = !showDone),
+            icon: Icon(showDone ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18),
+            label: Text('완료한 복습 ${done.length}개', style: const TextStyle(fontSize: 13)),
+            style: TextButton.styleFrom(foregroundColor: mutedInk))),
+          if (showDone) Container(decoration: cardDecoration, clipBehavior: Clip.antiAlias, child: Column(children: [
+            for (var i = 0; i < done.length; i++) ...[
+              if (i > 0) const Divider(height: 1, indent: 48),
+              reviewRow(done[i], true),
             ],
-          ])))),
+          ])),
+        ],
+        const SectionTitle('주차별 기록'),
+        if (weeks.isEmpty) empty('주차를 마치면 여기에 정리돼요')
+        else ...weeks.map((w) => weekCard(w as Map)),
       ]));
   }
 }

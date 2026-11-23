@@ -13,7 +13,7 @@ import httpx
 from reportlab.pdfgen import canvas
 
 from ai import demo_mode, demo_response, generate_json
-from db import connect
+from db import connect, migrate
 from main import app
 
 
@@ -65,11 +65,20 @@ async def fake_ai(instructions, payload):
             "understanding": "훈련과 검증을 구분했다."}
 
 
+def make_client(name="테스터"):
+    """회원가입 후 토큰을 헤더에 넣은 테스트 클라이언트."""
+    client = TestClient(app)
+    signed = client.post("/auth/signup", json={"name": name, "password": "1234"})
+    assert signed.status_code == 200, signed.text
+    client.headers["Authorization"] = f"Bearer {signed.json()['token']}"
+    return client
+
+
 class FlowTest(unittest.TestCase):
     def test_next_week_starts_with_pending_review_when_enabled(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
-            client = TestClient(app)
+            client = make_client()
             study = client.post("/studies", data={"title": "신경망", "goal": "훈련 이해",
                 "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"},
                 files={"pdf": ("guide.pdf", sample_pdf(), "application/pdf")}).json()
@@ -89,7 +98,7 @@ class FlowTest(unittest.TestCase):
     def test_review_queue_and_learning_report_follow_real_study_records(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
-            client = TestClient(app)
+            client = make_client()
             study = client.post("/studies", data={"title": "신경망", "goal": "훈련과 검증 이해",
                 "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"}).json()
             study_id = study["id"]
@@ -122,13 +131,15 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(client.put(f"/studies/{study_id}/reviews/999999", json={"resolved": True}).status_code, 404)
             with connect() as db:
                 db.execute("DELETE FROM review_items")
+            with connect() as db:
+                migrate(db)  # 서버를 다시 켤 때처럼 기존 기록에서 복습 항목을 되살린다
             migrated = client.get(f"/studies/{study_id}/reviews").json()
             self.assertEqual(len(migrated), 2)
 
     def test_room_management_and_later_pdf_keep_old_sources(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
-            client = TestClient(app)
+            client = make_client()
             study = client.post("/studies", data={"title": "첫 이름", "goal": "정렬 배우기",
                 "start_date": "2026-11-22", "weeks": "2", "hours_per_week": "3"}).json()
             study_id = study["id"]
@@ -169,7 +180,7 @@ class FlowTest(unittest.TestCase):
     def test_pinned_room_opens_first_and_empty_notes_can_finish(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
-            client = TestClient(app)
+            client = make_client()
             ids = []
             for title in ("첫 방", "두 번째 방"):
                 response = client.post("/studies", data={"title": title, "goal": title,
@@ -235,7 +246,7 @@ class FlowTest(unittest.TestCase):
             return await fake_ai(instructions, payload)
 
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", social_ai):
-            client = TestClient(app)
+            client = make_client()
             study = client.post("/studies", data={"title": "정렬", "goal": "정렬 방법 비교",
                 "start_date": "2026-11-18", "weeks": "2", "hours_per_week": "3", "member_count": "2"}).json()
             session_id = client.post(f"/studies/{study['id']}/weeks/1/sessions",
@@ -249,7 +260,7 @@ class FlowTest(unittest.TestCase):
     def test_demo_study_reacts_and_follows_up_without_echoing_answer(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
             "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
-            client = TestClient(app)
+            client = make_client()
             study = client.post("/studies", data={"title": "신경망", "goal": "학습과 배포 이해",
                 "start_date": "2026-11-16", "weeks": "2", "hours_per_week": "3", "member_count": "2"},
                 files={"pdf": ("guide.pdf", sample_pdf(), "application/pdf")}).json()
@@ -294,9 +305,82 @@ class FlowTest(unittest.TestCase):
         self.assertNotIn("동문서답", result["reaction"])
         self.assertEqual(result["page_no"], 1)
 
+    def test_topic_only_study_and_member_profile_edit(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+            client = make_client()
+            created = client.post("/studies", data={"title": "운영체제", "member_profiles": json.dumps([
+                {"role": 1, "name": "케이스", "level": "기초"}, {"role": 3, "name": "", "level": "심화"}],
+                ensure_ascii=False)})
+            self.assertEqual(created.status_code, 200, created.text)
+            study = created.json()
+            self.assertEqual((study["goal"], len(study["weeks"]), study["hours_per_week"]), ("운영체제", 4, 3))
+            members = study["members"]
+            self.assertEqual([(m["name"], m["perspective"], m["level"]) for m in members],
+                             [("케이스", "예시와 적용", "기초"), ("탐구이", "다른 해석", "심화")])
+            self.assertEqual(members[0]["persona"]["role"], "사례 찾기")
+            edited = client.put(f"/studies/{study['id']}/members/2", json={"name": "반례왕", "level": "중급"})
+            self.assertEqual(edited.status_code, 200, edited.text)
+            self.assertEqual((edited.json()["members"][1]["name"], edited.json()["members"][1]["level"]), ("반례왕", "중급"))
+            self.assertEqual(client.put(f"/studies/{study['id']}/members/2", json={"level": "최상"}).status_code, 400)
+
+            session_id = client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""}).json()["session_id"]
+            client.post(f"/sessions/{session_id}/question")
+            client.post(f"/sessions/{session_id}/answer", json={"text": "이번 주 모임 3일 미루자"})
+            client.post(f"/sessions/{session_id}/finish", json={"revised_note": ""})
+            week = client.get(f"/studies/{study['id']}/learning-report").json()["weeks"][0]
+            self.assertEqual(week["answer_count"], 0)
+            self.assertEqual(week["baseline_text"], "")
+
+    def test_demo_questions_follow_member_role(self):
+        base = {"study_goal": "정렬", "week": {"title": "퀵 정렬"}, "question_count": 1,
+                "messages": [{"role": "assistant", "member_no": 9, "body": "처음 질문"}], "source_pages": []}
+        example = demo_response("질문", {**base, "member": {"member_no": 1, "perspective": "예시와 적용"}})["question"]
+        doubt = demo_response("질문", {**base, "member": {"member_no": 2, "perspective": "다른 해석"}})["question"]
+        self.assertIn("퀵 정렬", example)
+        self.assertIn("예를 들어", example)
+        self.assertNotEqual(example, doubt)
+
+    def test_login_keeps_studies_private_and_room_opens_in_one_request(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+            self.assertEqual(TestClient(app).get("/studies").status_code, 401)
+            alice = make_client("앨리스")
+            study = alice.post("/studies", data={"title": "확률"}).json()
+            bob = make_client("바비")
+            self.assertEqual(bob.get("/studies").json(), [])
+            self.assertEqual(bob.post(f"/studies/{study['id']}/room").status_code, 404)
+            self.assertEqual(TestClient(app).post("/auth/login", json={"name": "앨리스", "password": "0000"}).status_code, 401)
+            again = TestClient(app).post("/auth/login", json={"name": "앨리스", "password": "1234"})
+            self.assertEqual(again.json()["stats"]["studies"], 1)
+
+            room = alice.post(f"/studies/{study['id']}/room").json()
+            self.assertEqual((room["session"]["week_no"], room["history"]), (1, []))
+            self.assertEqual(alice.post(f"/studies/{study['id']}/room").json()["session"]["id"], room["session"]["id"])
+            session_id = room["session"]["id"]
+            alice.post(f"/sessions/{session_id}/question")
+            alice.post(f"/sessions/{session_id}/answer", json={"text": "확률은 일어날 가능성을 수로 나타낸 거예요."})
+            alice.post(f"/sessions/{session_id}/finish", json={"revised_note": ""})
+            moved = alice.post(f"/studies/{study['id']}/room").json()
+            self.assertEqual(moved["session"]["week_no"], 2)
+            self.assertEqual([h["id"] for h in moved["history"]], [session_id])
+
+            batch = alice.put(f"/studies/{study['id']}/weeks", json={"weeks": [
+                {"week_no": 3, "title": "베이즈", "scope": "조건부 확률과 베이즈 정리"}]})
+            self.assertEqual(batch.json()["weeks"][2]["title"], "베이즈")
+            records = alice.get("/me/records").json()
+            self.assertEqual(records["weeks"][0]["study_title"], "확률")
+            me = alice.get("/me").json()
+            self.assertEqual((me["user"]["name"], me["stats"]["completed_weeks"], me["stats"]["answers"]), ("앨리스", 1, 1))
+            self.assertEqual(alice.put("/me", json={"name": "바비"}).status_code, 409)
+            self.assertEqual(alice.delete(f"/studies/{study['id']}").status_code, 200)
+            self.assertEqual(alice.get("/studies").json(), [])
+            self.assertEqual(alice.post("/auth/logout").status_code, 200)
+            self.assertEqual(alice.get("/me").status_code, 401)
+
     def test_study_without_pdf_can_start_chat(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
-            client = TestClient(app)
+            client = make_client()
             created = client.post("/studies", data={"title": "알고리즘", "goal": "정렬 원리 설명", "start_date": "2026-11-16",
                 "weeks": "2", "hours_per_week": "3", "member_count": "2",
                 "member_profiles": json.dumps([
@@ -324,7 +408,7 @@ class FlowTest(unittest.TestCase):
 
     def test_study_to_minutes_and_next_week_review(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", fake_ai):
-            client = TestClient(app)
+            client = make_client()
             created = client.post("/studies", data={"title": "신경망", "goal": "학습 과정을 설명한다", "start_date": "2026-11-16",
                 "weeks": "2", "hours_per_week": "3", "member_count": "2"},
                 files={"pdf": ("guide.pdf", sample_pdf(), "application/pdf")})
@@ -397,7 +481,7 @@ class FlowTest(unittest.TestCase):
             return await fake_ai(instructions, payload)
 
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": os.path.join(folder, "test.sqlite3")}), patch("ai.generate_json", recording_ai):
-            client = TestClient(app)
+            client = make_client()
             created = client.post("/studies", data={"title": "신경망", "goal": "학습과 배포 이해", "start_date": "2026-11-16",
                 "weeks": "2", "hours_per_week": "3", "member_count": "2"},
                 files={"pdf": ("guide.pdf", sample_pdf(), "application/pdf")})

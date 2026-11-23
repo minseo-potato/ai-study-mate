@@ -54,6 +54,43 @@ async def generate_json(instructions: str, payload: dict) -> dict:
         raise HTTPException(502, f"AI 응답을 처리하지 못했습니다: {type(exc).__name__}") from exc
 
 
+# 체험 모드에서 스터디원 역할별로 다르게 묻는 질문. {topic}에 이번 주 주제가 들어간다.
+DEMO_QUESTIONS = {
+    "개념과 정의": ["'{topic}'를 한 문장으로 정의하면 어떻게 말할 수 있을까요?",
+                "'{topic}'와 헷갈리기 쉬운 개념이 있다면 무엇이 다를까요?",
+                "'{topic}'를 설명할 때 꼭 들어가야 하는 핵심 용어는 뭐라고 생각해요?"],
+    "예시와 적용": ["예를 들어 '{topic}'를 실제 상황에 쓴다면 어떤 장면이 떠오르나요?",
+                "'{topic}'로 해결할 수 있는 문제를 하나 들어 볼 수 있을까요?",
+                "주변에서 '{topic}'와 비슷한 예를 본 적 있어요?"],
+    "앞 주차와의 연결": ["앞에서 배운 내용과 '{topic}'는 어떻게 이어질까요?",
+                   "'{topic}'는 전체 흐름에서 어떤 역할을 한다고 생각해요?",
+                   "'{topic}'를 알고 나니 앞 내용이 다르게 보이는 부분이 있나요?"],
+    "다른 해석": ["그런데 '{topic}'가 항상 맞을까요? 예외가 되는 경우가 있을지 궁금해요.",
+              "'{topic}'가 왜 그렇게 되는지 근거를 들어 볼 수 있을까요?",
+              "만약 '{topic}'에서 조건 하나가 바뀌면 결과가 어떻게 달라질까요?"],
+}
+DEMO_FOLLOW_UPS = {
+    "개념과 정의": "용어 뜻을 한 번 더 정확히 짚어 보면 좋겠어요.",
+    "예시와 적용": "예시를 하나 붙이면 더 선명해질 것 같아요.",
+    "앞 주차와의 연결": "앞에서 배운 내용과 이어 보면 더 잘 보일 것 같아요.",
+    "다른 해석": "왜 그런지 근거도 같이 찾아보면 좋겠어요.",
+}
+DEMO_HINTS = {
+    "개념과 정의": "핵심 용어의 뜻부터 한 문장으로 정리해 보면 실마리가 보일 거예요.",
+    "예시와 적용": "직접 겪어 본 상황 하나를 떠올려서 거기에 대입해 보면 쉬워요.",
+    "앞 주차와의 연결": "지난번에 배운 내용 중 비슷한 원리가 있었는지 떠올려 보세요.",
+    "다른 해석": "'왜 그럴까?'와 '반대 경우는?'을 하나씩 따져 보면 정리돼요.",
+}
+
+
+def demo_topic(payload: dict) -> str:
+    """주차 제목이 'N주차'처럼 비어 있으면 학습 목표를 주제로 쓴다."""
+    title = str((payload.get("week") or {}).get("title") or "").strip()
+    if title and not title.endswith("주차"):
+        return title[:30]
+    return str(payload.get("study_goal") or payload.get("goal") or "이번 주 내용")[:30]
+
+
 def demo_response(instructions: str, payload: dict) -> dict:
     """Predictable offline responses for an API-key-free live demonstration."""
     if "답변 검토" in instructions:
@@ -66,19 +103,22 @@ def demo_response(instructions: str, payload: dict) -> dict:
                     if user_question else
                     f"이 질문에 대한 설명은 아직 듣지 못한 것 같아요. {page_hint} 다시 생각해 볼까요?"
                     if unclear else
-                    f"답해 줘서 고마워요. 체험 모드라 정답 여부를 단정할 수는 없어요. {page_hint} 근거를 확인해 볼까요?")
+                    f"답해 줘서 고마워요. 체험 모드라 정답 여부를 단정할 수는 없어요. "
+                    f"{DEMO_FOLLOW_UPS.get(payload.get('member', {}).get('perspective'), '')} {page_hint} 근거를 확인해 볼까요?")
         return {"reaction": reaction,
                 "alignment": "user_question" if user_question else "off_topic" if unclear else "uncertain",
                 "page_no": pages[0]["page_no"] if pages else None,
                 "understanding": payload.get("member", {}).get("understanding", "")[:400] + " | 이번 답변을 듣고 추가 확인 중"}
     if "교안 기반 설명" in instructions:
         pages = payload["source_pages"]
-        return {"explanation": "괜찮아요, 같이 생각해 봐요. 이 개념을 내 말로 설명하고 예시 하나에 연결해 볼까요? 교안도 다시 살펴보면 좋아요." if pages else
-                "괜찮아요, 같이 생각해 봐요. 이 개념을 내 말로 설명하고 예시 하나에 연결해 볼까요?",
+        tip = DEMO_HINTS.get((payload.get("member") or {}).get("perspective"),
+                             "이 개념을 내 말로 설명하고 예시 하나에 연결해 볼까요?")
+        return {"explanation": f"괜찮아요, 같이 생각해 봐요. {tip}" + (" 교안도 다시 살펴보면 좋아요." if pages else ""),
                 "page_no": pages[0]["page_no"] if pages else None}
     if "랩미팅 회의록" in instructions:
         questions = [m["body"] for m in payload["messages"] if m["role"] == "assistant"]
-        return {"summary": f"처음 발표와 다시 정리한 설명을 비교했다. 질문 {len(questions)}개를 논의했다.",
+        topic = demo_topic(payload)
+        return {"summary": f"'{topic}'에 대해 질문 {len(questions)}개를 함께 이야기했다.",
                 "next_checks": payload["unanswered"]}
     if "완료하지 못한 범위" in instructions:
         return {"weeks": [{"week_no": w["week_no"], "title": w["title"], "scope": w["scope"]}
@@ -115,11 +155,15 @@ def demo_response(instructions: str, payload: dict) -> dict:
         f"지금까지 나눈 이야기와 '{lead}'를 연결해 보면 어떤 생각이 들어요?",
     ]
     chosen_question = questions[question_count % len(questions)]
+    persona_questions = DEMO_QUESTIONS.get(member.get("perspective"))
+    if question_count and persona_questions:
+        own = sum(m["role"] == "assistant" and m.get("member_no") == member.get("member_no") for m in previous)
+        chosen_question = persona_questions[own % len(persona_questions)].format(topic=demo_topic(payload))
     if review_focus:
         chosen_question = f"지난번에 남겨둔 '{review_focus[:80]}'부터 같이 확인해 볼까요? 지금은 어떻게 설명할 수 있어요?"
     if question_count >= len(questions):
         chosen_question = f"이번엔 {question_count + 1}번째로 생각해 볼게요. {chosen_question}"
-    comment = ("이번 주 내용 같이 살펴봐요!" if not previous else
+    comment = (f"이번 주 '{demo_topic(payload)}' 같이 살펴봐요!" if not previous else
                "저도 그 부분이 궁금했어요. 같이 이어서 생각해 봐요." if question_count % 3 == 0 else "")
     members = payload.get("members", [member])
     other = next((m.get("member_no") for m in members if m.get("member_no") != member.get("member_no")), None)
@@ -127,4 +171,4 @@ def demo_response(instructions: str, payload: dict) -> dict:
             "comment_member_no": other,
             "question": chosen_question,
             "page_no": chosen_page["page_no"] if chosen_page else None,
-            "understanding": f"{member['perspective']} 관점에서 사용자의 설명을 들었다."}
+            "understanding": f"{member.get('perspective', '')} 관점에서 사용자의 설명을 들었다."}

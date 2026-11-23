@@ -3,23 +3,28 @@ import json
 import math
 import re
 from datetime import date, timedelta
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 import ai
+from auth import current_user
 from db import connect
-from common import INITIAL_UNDERSTANDING, LEVELS, PEER_NAMES, PERSPECTIVES, read_pdf, required, study_data
+from common import INITIAL_UNDERSTANDING, LEVELS, MEMBER_LEVELS, PEER_NAMES, PERSPECTIVES, read_pdf, required, study_data
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(current_user)])
 
 
 @router.get("/studies")
-def list_studies():
+def list_studies(user: dict = Depends(current_user)):
     """채팅 목록용: 스터디마다 지금 주차와 마지막 메시지를 함께 돌려준다(스터디 수와 상관없이 쿼리 3번)."""
+    uid = user["id"]
     with connect() as db:
-        items = [dict(r) for r in db.execute("SELECT * FROM studies ORDER BY archived ASC,pinned DESC,id DESC")]
+        items = [dict(r) for r in db.execute(
+            "SELECT * FROM studies WHERE user_id=? ORDER BY archived ASC,pinned DESC,id DESC", (uid,))]
         current = {}
-        for w in db.execute("SELECT study_id,week_no,title,meeting_date,status FROM weeks ORDER BY study_id,week_no"):
+        for w in db.execute("SELECT w.study_id,w.week_no,w.title,w.meeting_date,w.status FROM weeks w "
+                            "JOIN studies st ON st.id=w.study_id WHERE st.user_id=? ORDER BY w.study_id,w.week_no",
+                            (uid,)):
             seen = current.get(w["study_id"])
             if seen is None or seen["status"] == "complete":
                 current[w["study_id"]] = dict(w)
@@ -27,7 +32,7 @@ def list_studies():
             "SELECT s.study_id,m.role,m.body,mb.name FROM messages m JOIN sessions s ON s.id=m.session_id "
             "LEFT JOIN members mb ON mb.study_id=s.study_id AND mb.member_no=m.member_no "
             "WHERE m.id IN (SELECT MAX(m2.id) FROM messages m2 JOIN sessions s2 ON s2.id=m2.session_id "
-            "GROUP BY s2.study_id)")}
+            "JOIN studies st ON st.id=s2.study_id WHERE st.user_id=? GROUP BY s2.study_id)", (uid,))}
         for item in items:
             week = current.get(item["id"])
             item["current_week"] = None if week is None else {
@@ -39,10 +44,10 @@ def list_studies():
 
 
 @router.put("/studies/{study_id}/pin")
-def pin_study(study_id: int):
+def pin_study(study_id: int, user: dict = Depends(current_user)):
     with connect() as db:
         required(db, "SELECT id FROM studies WHERE id=? AND archived=0", (study_id,))
-        db.execute("UPDATE studies SET pinned=0")
+        db.execute("UPDATE studies SET pinned=0 WHERE user_id=?", (user["id"],))
         db.execute("UPDATE studies SET pinned=1 WHERE id=?", (study_id,))
         return study_data(db, study_id)
 
@@ -89,35 +94,43 @@ async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
 
 @router.post("/studies")
 async def create_study(
-    title: str = Form(...), goal: str = Form(...), start_date: date = Form(...),
-    weeks: int = Form(...), hours_per_week: float = Form(...),
-    member_count: int = Form(3), rules: str = Form("매주 정해진 범위를 공부하고 랩미팅에서 발표한다."),
+    title: str = Form(...), goal: str = Form(""), start_date: date | None = Form(None),
+    weeks: int = Form(4), hours_per_week: float = Form(3),
+    member_count: int | None = Form(None), rules: str = Form("매주 정해진 범위를 공부하고 랩미팅에서 발표한다."),
     member_profiles: str = Form(""),
     pdf: UploadFile | None = File(None),
+    user: dict = Depends(current_user),
 ):
-    if not 1 <= weeks <= 26 or not 0.5 <= hours_per_week <= 80 or not 1 <= member_count <= 4:
-        raise HTTPException(400, "기간, 시간 또는 AI 스터디원 수가 범위를 벗어났습니다.")
-    if not title.strip() or not goal.strip():
-        raise HTTPException(400, "주제와 목표를 입력해 주세요.")
+    """주제만 있으면 만들 수 있다. 목표·기간·시작일·스터디원은 비워 두면 기본값을 쓴다."""
+    title, goal = title.strip(), goal.strip() or title.strip()
+    start_date = start_date or date.today()
+    if not title:
+        raise HTTPException(400, "학습 주제를 입력해 주세요.")
     try:
         profiles = json.loads(member_profiles) if member_profiles else []
     except ValueError as exc:
         raise HTTPException(400, "AI 스터디원 설정을 읽지 못했습니다.") from exc
+    member_count = member_count or len(profiles) or 3
+    if not 1 <= weeks <= 26 or not 0.5 <= hours_per_week <= 80 or not 1 <= member_count <= 4:
+        raise HTTPException(400, "기간 또는 AI 스터디원 수가 범위를 벗어났습니다.")
     if profiles and (not isinstance(profiles, list) or len(profiles) != member_count or any(
         not isinstance(p, dict) or p.get("level") not in LEVELS or
-        not isinstance(p.get("understanding"), str) or len(p["understanding"]) > 500
+        not isinstance(p.get("understanding", ""), str) or len(p.get("understanding", "")) > 500 or
+        not isinstance(p.get("name", ""), str) or len(p.get("name", "").strip()) > 12 or
+        p.get("role", 0) not in range(len(PERSPECTIVES))
         for p in profiles
     )):
-        raise HTTPException(400, "AI 스터디원 수준과 이해 상태를 확인해 주세요.")
+        raise HTTPException(400, "AI 스터디원 이름(12자 이하)과 학습 단계를 확인해 주세요.")
     pages = []
     if pdf is not None:
         pages = await read_pdf(pdf)
     page_count = len(pages)
     with connect() as db:
         cur = db.execute(
-            "INSERT INTO studies(title,goal,start_date,weeks,hours_per_week,member_count,rules,pdf_name) VALUES(?,?,?,?,?,?,?,?)",
-            (title.strip(), goal.strip(), start_date.isoformat(), weeks, hours_per_week, member_count,
-             rules.strip(), pdf.filename if pdf else ""),
+            "INSERT INTO studies(title,goal,start_date,weeks,hours_per_week,member_count,rules,pdf_name,user_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (title, goal, start_date.isoformat(), weeks, hours_per_week, member_count,
+             rules.strip(), pdf.filename if pdf else "", user["id"]),
         )
         study_id = cur.lastrowid
         db.executemany("INSERT INTO pages VALUES(?,?,?)", [(study_id, n, body) for n, body in pages])
@@ -140,10 +153,32 @@ async def create_study(
                        (study_id, number, week_title, scope, meeting.isoformat()))
         for number in range(1, member_count + 1):
             profile = profiles[number-1] if profiles else {}
+            role = profile.get("role", (number - 1) % 4)
             db.execute("INSERT INTO members(study_id,member_no,name,perspective,level,understanding) VALUES(?,?,?,?,?,?)",
-                       (study_id, number, PEER_NAMES[(number-1) % 4], PERSPECTIVES[(number-1) % 4],
-                        profile.get("level", LEVELS[(number-1) % 4]),
-                        profile.get("understanding", INITIAL_UNDERSTANDING[(number-1) % 4]).strip()))
+                       (study_id, number, profile.get("name", "").strip() or PEER_NAMES[role], PERSPECTIVES[role],
+                        profile.get("level", LEVELS[role]),
+                        (profile.get("understanding") or INITIAL_UNDERSTANDING[role]).strip()))
+        return study_data(db, study_id)
+
+
+class MemberEdit(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=12)
+    level: str | None = None
+
+
+@router.put("/studies/{study_id}/members/{member_no}")
+def edit_member(study_id: int, member_no: int, body: MemberEdit):
+    """채팅방 정보에서 AI 스터디원의 이름과 학습 단계를 바꾼다."""
+    with connect() as db:
+        member = required(db, "SELECT * FROM members WHERE study_id=? AND member_no=?", (study_id, member_no))
+        name = member["name"] if body.name is None else body.name.strip()
+        if not name:
+            raise HTTPException(400, "이름을 입력해 주세요.")
+        level = body.level or member["level"]
+        if level not in MEMBER_LEVELS:
+            raise HTTPException(400, "학습 단계는 기초, 중급, 심화 중 하나예요.")
+        db.execute("UPDATE members SET name=?,level=? WHERE study_id=? AND member_no=?",
+                   (name, level, study_id, member_no))
         return study_data(db, study_id)
 
 
@@ -177,6 +212,36 @@ def edit_week(study_id: int, week_no: int, body: WeekEdit):
                    (body.title, body.scope, body.meeting_date.isoformat(), status, progress,
                     remaining_scope, include_previous, study_id, week_no))
         return study_data(db, study_id)
+
+
+class WeekDraft(BaseModel):
+    week_no: int
+    title: str = Field(min_length=1, max_length=120)
+    scope: str = Field(min_length=1, max_length=300)
+
+
+class WeekBatch(BaseModel):
+    weeks: list[WeekDraft] = Field(max_length=26)
+
+
+@router.put("/studies/{study_id}/weeks")
+def edit_weeks(study_id: int, body: WeekBatch):
+    """AI 계획안처럼 여러 주차의 제목·범위를 한 번에 바꾼다(날짜·상태는 그대로)."""
+    with connect() as db:
+        db.executemany("UPDATE weeks SET title=?,scope=? WHERE study_id=? AND week_no=?",
+                       [(w.title.strip(), w.scope.strip(), study_id, w.week_no) for w in body.weeks])
+        return study_data(db, study_id)
+
+
+@router.delete("/studies/{study_id}")
+def delete_study(study_id: int):
+    """스터디와 대화·기록을 모두 지운다."""
+    with connect() as db:
+        db.execute("DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE study_id=?)", (study_id,))
+        for table in ("sessions", "weeks", "members", "pages", "page_history", "review_items"):
+            db.execute(f"DELETE FROM {table} WHERE study_id=?", (study_id,))
+        db.execute("DELETE FROM studies WHERE id=?", (study_id,))
+        return {"ok": True}
 
 
 @router.post("/studies/{study_id}/plan-draft")

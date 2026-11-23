@@ -1,13 +1,14 @@
 """채팅 세션 API: 질문, 힌트, 답변(운영 요청 포함), 주차 마무리."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import ai
+from auth import current_user
 import planner
 from db import connect, dumps, loads
-from common import required, session_data, source_pages, study_data
+from common import PEER_RULES, learning_messages, required, session_data, source_pages, study_data
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(current_user)])
 
 
 class Note(BaseModel):
@@ -34,6 +35,28 @@ def start_session(study_id: int, week_no: int, body: Note):
 def get_session(session_id: int):
     with connect() as db:
         return session_data(db, session_id)
+
+
+@router.post("/studies/{study_id}/room")
+def open_room(study_id: int):
+    """채팅방 열기: 지금 주차 대화(없으면 새로 시작)와 지난 주차 대화를 요청 한 번에 돌려준다."""
+    with connect() as db:
+        week = db.execute("SELECT week_no FROM weeks WHERE study_id=? AND status!='complete' ORDER BY week_no LIMIT 1",
+                          (study_id,)).fetchone() or required(
+            db, "SELECT week_no FROM weeks WHERE study_id=? ORDER BY week_no DESC LIMIT 1", (study_id,))
+        active = db.execute("SELECT id FROM sessions WHERE study_id=? AND week_no=? AND status='active' "
+                            "ORDER BY id LIMIT 1", (study_id, week["week_no"])).fetchone()
+        if active:
+            session_id = active["id"]
+        else:
+            session_id = db.execute("INSERT INTO sessions(study_id,week_no,initial_note) VALUES(?,?,'')",
+                                    (study_id, week["week_no"])).lastrowid
+            db.execute("UPDATE weeks SET status='in_progress' WHERE study_id=? AND week_no=?",
+                       (study_id, week["week_no"]))
+        history = [session_data(db, r["id"]) for r in db.execute(
+            "SELECT id FROM sessions WHERE study_id=? AND status='finished' AND id!=? ORDER BY week_no,id",
+            (study_id, session_id))]
+        return {"session": session_data(db, session_id), "history": history}
 
 
 @router.get("/studies/{study_id}/history")
@@ -101,10 +124,13 @@ async def next_question(session_id: int):
                         previous_pages.append(page)
                         seen.add(page["page_no"])
     result = await ai.generate_json(
-        "여러 사람이 함께 공부하는 대화의 다음 차례를 만드세요. JSON 키는 speaker_no,comment,comment_member_no,question,page_no,understanding입니다. "
-        "members 중 대화 맥락에 어울리는 speaker_no를 고르세요. suggested_member_no는 참고일 뿐이고, 필요하면 같은 동료가 후속 질문을 해도 됩니다. "
-        "comment는 다른 동료의 짧은 공감·보충 의견이 실제로 도움이 될 때만 넣고, 아니면 빈 문자열로 두세요. comment_member_no는 그 동료 번호입니다. "
-        "질문은 한 개만 하세요. 각 동료의 수준·누적 이해·앞선 발언을 반영하고, 반복적인 칭찬이나 시험 문제 같은 말투를 피하세요. "
+        PEER_RULES +
+        "스터디 대화의 다음 차례를 만드세요. JSON 키는 speaker_no,comment,comment_member_no,question,page_no,understanding입니다. "
+        "지금 대화 흐름에 가장 필요한 관점을 가진 동료를 speaker_no로 고르세요. 개념이 흐릿하면 '개념 정리', 이해했지만 막연하면 '사례 찾기', "
+        "앞 내용과 이어 볼 때는 '흐름 연결', 설명이 단정적이면 '깊이 파기' 역할이 어울립니다. suggested_member_no는 참고일 뿐입니다. "
+        "question은 그 동료가 자기 persona.focus 관점에서 실제로 궁금해할 질문 한 개이며, persona.style 말투와 level_guide 깊이를 따르세요. "
+        "comment는 다른 동료가 짧게 공감하거나 자기 관점에서 한마디 보탤 때만 넣고, 아니면 빈 문자열로 두세요. comment_member_no는 그 동료 번호입니다. "
+        "각 동료의 누적 understanding과 앞선 발언을 반영하세요. "
         "사용자 답변과 직전 동료의 반응에 맞춰 후속 질문을 바꾸세요. 발표문이 비어 있으면 current_source_pages의 교안 내용을 중심으로 질문하세요. "
         "사용자 답변을 그대로 인용해 질문하지 마세요. 무관한 답변을 받았다면 교안의 핵심 개념으로 부드럽게 돌아오세요. "
         "include_previous_questions가 참이고 review_focus가 있으면 이번 세션 첫 질문은 그 복습 내용을 먼저 확인하세요. "
@@ -126,7 +152,8 @@ async def next_question(session_id: int):
     prior_questions = {m["body"].strip() for m in session["messages"] if m["role"] == "assistant"}
     if question in prior_questions:
         result = await ai.generate_json(
-            "앞선 질문과 겹쳤습니다. 아래 질문과 다른 새 질문 한 개를 만드세요. "
+            PEER_RULES +
+        "앞선 질문과 겹쳤습니다. 아래 질문과 다른 새 질문 한 개를 speaker의 persona 관점으로 만드세요. "
             "JSON 키는 speaker_no,comment,comment_member_no,question,page_no,understanding입니다. "
             "이번 주 범위와 교안에 근거하고, 답변의 맥락을 이어 가세요.",
             {"study_goal": study["goal"], "week": question_week, "member": member,
@@ -184,10 +211,14 @@ async def explain(session_id: int):
                                            w["week_no"], len(study["weeks"]))]
             pages = (pages + [p for p in older if p["page_no"] == question["page_no"]])[:4]
     result = await ai.generate_json(
-        "교안 기반 설명을 요청받았습니다. 친구가 옆에서 도와주듯 자연스러운 존댓말로 짧은 힌트를 주세요. "
-        "교안에 없는 사실이나 페이지 번호를 만들지 마세요. 교안이 없으면 일반적인 생각의 방향만 알려주세요. "
+        PEER_RULES +
+        "교안 기반 설명을 요청받았습니다. 질문한 동료(member)가 자기 persona 관점과 말투로, 정답을 통째로 말하지 말고 "
+        "생각의 실마리가 되는 힌트를 두세 문장으로 주세요. 개념 정리는 핵심 정의의 단서, 사례 찾기는 떠올릴 만한 상황, "
+        "흐름 연결은 앞에서 배운 관련 내용, 깊이 파기는 따져 볼 기준을 짚어 주면 좋습니다. "
+        "교안에 없는 사실이나 페이지 번호를 만들지 마세요. 교안이 없으면 생각의 방향만 알려주세요. "
         "JSON 키는 explanation,page_no입니다.",
         {"goal": study["goal"], "week": week, "question": question["body"],
+         "member": next((m for m in study["members"] if m["member_no"] == question["member_no"]), None),
          "initial_note": session["initial_note"], "messages": messages[-12:], "source_pages": pages},
     )
     explanation = str(result.get("explanation", "")).strip()
@@ -250,7 +281,9 @@ async def answer(session_id: int, body: Answer):
                 pages = [{"page_no": cited["page_no"], "text": cited["body"][:2500]}] + pages[:2]
         member = next(m for m in study["members"] if m["member_no"] == question["member_no"])
     result = await ai.generate_json(
-        "답변 검토: 스터디 동료로서 사용자의 답변이 직전 질문에 실제로 답했는지 먼저 확인하세요. "
+        PEER_RULES +
+        "답변 검토: 질문한 동료(member)로서 사용자의 답변이 직전 질문에 실제로 답했는지 먼저 확인하고, "
+        "자기 persona 관점에서 좋았던 점이나 더 생각해 볼 점을 한 가지 짚으세요. "
         "교안 페이지가 있으면 그 내용과 맞는 부분, 다른 부분, 확인할 수 없는 부분을 구분하세요. "
         "교안이 없거나 근거가 부족하면 정답이라고 단정하지 마세요. 무관하거나 장난스러운 답변은 인용하지 말고 "
         "질문으로 돌아올 수 있게 친절하게 말하세요. 사용자가 역으로 질문했다면 그 질문에 교안 기준으로 짧게 답하고 대화를 이어가세요. "
@@ -258,7 +291,7 @@ async def answer(session_id: int, body: Answer):
         "자연스러운 한국어 존댓말 한두 문장으로 반응하세요. JSON 키는 reaction,alignment,page_no,understanding입니다. "
         "alignment는 supported,partial,off_topic,uncertain,user_question 중 하나입니다. page_no는 제공된 교안 쪽수만 쓰세요.",
         {"question": question["body"], "answer": body.text.strip(), "member": member,
-         "week": week, "source_pages": pages, "messages": session["messages"][-8:]},
+         "study_goal": study["goal"], "week": week, "source_pages": pages, "messages": session["messages"][-8:]},
     )
     reaction = str(result.get("reaction", "")).strip()
     if not reaction:
@@ -299,7 +332,8 @@ async def finish(session_id: int, body: Finish):
             raise HTTPException(409, "이미 종료된 세션입니다.")
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
-        last_user_note = next((m["body"] for m in reversed(session["messages"]) if m["role"] == "user"), "")
+        talk = learning_messages(session["messages"])
+        last_user_note = next((m["body"] for m in reversed(talk) if m["role"] == "user"), "")
         learned_source = body.revised_note.strip() or last_user_note or session["initial_note"] or study["goal"]
         pages = source_pages(db, session["study_id"], week["scope"], learned_source,
                              session["week_no"], len(study["weeks"]))
@@ -308,9 +342,13 @@ async def finish(session_id: int, body: Finish):
             pending.append(next(m["body"] for m in reversed(session["messages"]) if m["role"] == "assistant"))
     summary = await ai.generate_json(
         "랩미팅 회의록을 한국어로 요약하세요. JSON 키는 summary, next_checks입니다. "
-        "사용자 발언과 AI 질문을 구별하고, 근거 없는 사실을 확정하지 마세요. next_checks는 문자열 배열입니다.",
-        {"initial_note": session["initial_note"], "revised_note": body.revised_note,
-         "messages": session["messages"], "unanswered": pending, "source_pages": pages},
+        "summary는 이번 주 주제(week.title)에 대해 사용자가 무엇을 설명했고 어떤 부분이 분명해졌는지 두세 문장으로 쓰세요. "
+        "일정·계획 변경(assistant_plan) 대화는 학습 내용이 아니므로 요약에서 빼세요. "
+        "사용자 발언과 AI 질문을 구별하고, 근거 없는 사실을 확정하지 마세요. "
+        "next_checks는 다음 주에 다시 확인할 질문 문자열 배열이며, 이미 충분히 답한 내용은 넣지 마세요.",
+        {"study_goal": study["goal"], "week": week,
+         "initial_note": session["initial_note"], "revised_note": body.revised_note,
+         "messages": talk, "unanswered": pending, "source_pages": pages},
     )
     checks = summary.get("next_checks", [])
     if not isinstance(checks, list):

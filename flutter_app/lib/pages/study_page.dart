@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
+import '../theme.dart';
 import '../widgets/common.dart';
 import 'learning_journey_page.dart';
-import 'week_page.dart';
-import 'session_page.dart';
 
+/// 전체 계획·일정. 주차를 누르면 제목·범위·모임 날짜를 바로 고칠 수 있다.
 class StudyPage extends StatefulWidget {
   final int id;
   const StudyPage({super.key, required this.id});
@@ -12,141 +12,183 @@ class StudyPage extends StatefulWidget {
 }
 class _StudyPageState extends State<StudyPage> {
   Map<String, dynamic>? study;
-  List<dynamic> minutes = [];
   bool busy = false;
-  int selectedWeek = 1;
   @override void initState() { super.initState(); refresh(); }
   Future<void> refresh() async {
     try {
       final data = await Api.request('GET', '/studies/${widget.id}');
-      final records = await Api.request('GET', '/studies/${widget.id}/minutes');
-      if (mounted) {
-        setState(() {
-          if (study == null) {
-            final weeks = data['weeks'] as List;
-            selectedWeek = (weeks.firstWhere((w) => w['status'] != 'complete', orElse: () => weeks.first))['week_no'];
-          }
-          study = data; minutes = records;
-        });
-      }
+      if (mounted) setState(() => study = data);
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
-  Future<void> draft([bool replan = false]) async {
+
+  /// 남은 주차 계획을 AI에게 다시 받아 확인 후 적용한다.
+  Future<void> redraft() async {
+    final weeks = study!['weeks'] as List;
+    final replan = weeks.any((w) => w['status'] == 'complete');
     setState(() => busy = true);
     try {
       final result = await Api.request('POST', '/studies/${widget.id}/${replan ? 'replan-draft' : 'plan-draft'}');
       if (!mounted) return;
       final drafts = result['weeks'] as List<dynamic>;
-      final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
-        title: Text(replan ? '남은 일정 변경안 확인' : 'AI 계획 확인'),
-        content: SizedBox(width: 500, child: ListView(shrinkWrap: true, children: drafts.map((w) =>
-          ListTile(title: Text('${w['week_no']}주차 · ${w['title']}'), subtitle: Text(w['scope']))).toList())),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('적용'))],
-      ));
+      final approved = await showAdaptiveSheet<bool>(context, (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text('새 계획안', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          Flexible(child: ListView(shrinkWrap: true, children: [
+            for (final w in drafts) Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SizedBox(width: 48, child: Text('${w['week_no']}주차',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: brand))),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${w['title']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  if ('${w['scope']}' != '${w['title']}')
+                    Text('${w['scope']}', style: const TextStyle(fontSize: 13, color: subInk)),
+                ])),
+              ])),
+          ])),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(sheetContext, false), child: const Text('그대로 두기'))),
+            const SizedBox(width: 10),
+            Expanded(child: FilledButton(onPressed: () => Navigator.pop(sheetContext, true), child: const Text('적용'))),
+          ]),
+        ]));
       if (approved != true) return;
-      for (final item in drafts) {
-        final old = (study!['weeks'] as List).firstWhere((w) => w['week_no'] == item['week_no']);
-        await Api.request('PUT', '/studies/${widget.id}/weeks/${item['week_no']}', {
-          'title': item['title'], 'scope': item['scope'], 'meeting_date': old['meeting_date'], 'status': old['status']});
-      }
-      await refresh();
+      // 여러 주차를 요청 한 번으로 바꾼다.
+      final data = await Api.request('PUT', '/studies/${widget.id}/weeks', {'weeks': [
+        for (final item in drafts) {'week_no': item['week_no'], 'title': item['title'], 'scope': item['scope']}]});
+      if (mounted) setState(() => study = data);
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
   }
+
+  Future<void> editWeek(Map week) async {
+    final title = TextEditingController(text: '${week['title']}');
+    final scope = TextEditingController(text: '${week['scope']}');
+    var date = DateTime.parse('${week['meeting_date']}');
+    var includePrevious = week['include_previous_questions'] != 0;
+    final complete = week['status'] == 'complete';
+    final saved = await showAdaptiveSheet<bool>(context, (sheetContext) => StatefulBuilder(
+      builder: (sheetContext, setSheet) => Column(mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('${week['week_no']}주차 계획', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 16),
+          TextField(controller: title, maxLength: 120, decoration: const InputDecoration(labelText: '주제', counterText: '')),
+          const SizedBox(height: 12),
+          TextField(controller: scope, maxLength: 300, minLines: 1, maxLines: 3,
+            decoration: const InputDecoration(labelText: '공부할 범위', hintText: '예: 교안 1~8쪽, 역전파 원리', counterText: '')),
+          const SizedBox(height: 12),
+          Material(color: Colors.white, borderRadius: BorderRadius.circular(14), child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () async {
+              final picked = await showDatePicker(context: sheetContext, initialDate: date,
+                firstDate: DateTime(date.year - 1), lastDate: DateTime(date.year + 2));
+              if (picked != null) setSheet(() => date = picked);
+            },
+            child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE1E3E8))),
+              child: Row(children: [
+                const Icon(Icons.event_outlined, color: mutedInk), const SizedBox(width: 12),
+                const Text('모임 날짜', style: TextStyle(color: subInk)), const Spacer(),
+                Text(friendlyDate(date.toIso8601String().substring(0, 10)), style: const TextStyle(fontWeight: FontWeight.w600)),
+              ])))),
+          if (week['week_no'] > 1 && !complete) SwitchListTile(contentPadding: const EdgeInsets.only(left: 4),
+            title: const Text('지난 주차 내용도 질문받기', style: TextStyle(fontSize: 14)),
+            value: includePrevious, onChanged: (v) => setSheet(() => includePrevious = v)),
+          const SizedBox(height: 16),
+          FilledButton(onPressed: () => Navigator.pop(sheetContext, true), child: const Text('저장')),
+        ])));
+    final payload = {
+      'title': title.text.trim(), 'scope': scope.text.trim().isEmpty ? title.text.trim() : scope.text.trim(),
+      'meeting_date': date.toIso8601String().substring(0, 10), 'status': week['status'],
+      'include_previous_questions': includePrevious,
+    };
+    title.dispose(); scope.dispose();
+    if (saved != true || !mounted) return;
+    if ((payload['title'] as String).isEmpty) { errorMessage(context, '주제를 입력해 주세요.'); return; }
+    try {
+      final data = await Api.request('PUT', '/studies/${widget.id}/weeks/${week['week_no']}', payload);
+      if (mounted) setState(() => study = data);
+    } catch (e) { if (mounted) errorMessage(context, e); }
+  }
+
+  Widget weekRow(Map w, bool current) {
+    final complete = w['status'] == 'complete';
+    final showScope = '${w['scope']}'.trim() != '${w['title']}'.trim();
+    return Material(color: Colors.white, borderRadius: BorderRadius.circular(16), child: InkWell(
+      onTap: () => editWeek(w), borderRadius: BorderRadius.circular(16),
+      child: Container(padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: current ? brand.withValues(alpha: 0.45) : lineColor)),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(width: 30, height: 30, alignment: Alignment.center,
+            decoration: BoxDecoration(shape: BoxShape.circle,
+              color: complete ? brand : current ? brandSoft : pageBg),
+            child: complete ? const Icon(Icons.check_rounded, size: 18, color: Colors.white)
+              : Text('${w['week_no']}', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13,
+                  color: current ? brand : mutedInk))),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${w['title']}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: ink)),
+            if (showScope) Padding(padding: const EdgeInsets.only(top: 3),
+              child: Text('${w['scope']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: subInk, height: 1.4))),
+            const SizedBox(height: 6),
+            Text('${friendlyDate('${w['meeting_date']}')}${current ? ' · 진행 중' : complete ? ' · 완료' : ''}',
+              style: TextStyle(fontSize: 12, color: current ? brand : mutedInk,
+                fontWeight: current ? FontWeight.w600 : FontWeight.w400)),
+          ])),
+          const Icon(Icons.chevron_right_rounded, color: mutedInk),
+        ]))));
+  }
+
   @override Widget build(BuildContext context) {
     final weeks = (study?['weeks'] as List?) ?? [];
-    final current = weeks.isEmpty ? null : weeks.firstWhere((w) => w['week_no'] == selectedWeek,
-      orElse: () => weeks.first);
     final completed = weeks.where((w) => w['status'] == 'complete').length;
-    return Scaffold(appBar: AppBar(title: Text(study?['title'] ?? '스터디')),
+    final current = weeks.cast<Map?>().firstWhere((w) => w?['status'] != 'complete', orElse: () => null);
+    return Scaffold(
+      appBar: AppBar(title: const Text('계획·일정')),
       body: study == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
-        SoftPanel(color: const Color(0xFFF6F4FF), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(study!['goal'], style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
-          Text((study!['pdf_name'] as String).isEmpty ? '교안 없이 내 방식대로 공부해요' : '함께 볼 교안 · ${study!['pdf_name']}',
-            style: const TextStyle(color: Color(0xFF8B8F97))),
-          const SizedBox(height: 16),
-          Text('$completed / ${weeks.length}주 완료', style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 7),
-          LinearProgressIndicator(value: completed / weeks.length, minHeight: 8,
-            borderRadius: BorderRadius.circular(8), backgroundColor: const Color(0xFFE6E0FF)),
-        ])),
-        Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-          leading: const CircleAvatar(backgroundColor: Color(0xFFF1EDFF),
-            child: Icon(Icons.insights_rounded, color: Color(0xFF7C5CFC))),
-          title: const Text('학습 성장 기록', style: TextStyle(fontWeight: FontWeight.w700)),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(context, MaterialPageRoute(
-            builder: (_) => LearningJourneyPage(studyId: widget.id))).then((_) => refresh()))),
-        const SectionTitle('주간 학습'),
-        SizedBox(height: 64, child: ListView(scrollDirection: Axis.horizontal, children: weeks.map((w) {
-          final selected = w['week_no'] == selectedWeek;
-          return Padding(padding: const EdgeInsets.only(right: 8), child: InkWell(
-            borderRadius: BorderRadius.circular(14),
-            onTap: () => setState(() => selectedWeek = w['week_no']),
-            child: Container(width: 92, padding: const EdgeInsets.symmetric(vertical: 9),
-              decoration: BoxDecoration(color: selected ? const Color(0xFF7C5CFC) : const Color(0xFFF1EDFF),
-                borderRadius: BorderRadius.circular(14)),
-              child: Column(children: [
-                Text('${w['week_no']}주차', style: TextStyle(fontWeight: FontWeight.w700,
-                  color: selected ? Colors.white : const Color(0xFF191A1C))),
-                const SizedBox(height: 3),
-                Text(weekStatusLabel(w['status']), style: TextStyle(fontSize: 11,
-                  color: selected ? Colors.white70 : const Color(0xFF8B8F97))),
-              ]))));
-        }).toList())),
-        if (current != null) SoftPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const CircleAvatar(backgroundColor: Color(0xFFF1EDFF),
-              child: Icon(Icons.menu_book_rounded, color: Color(0xFF7C5CFC))),
-            const SizedBox(width: 12),
-            Expanded(child: Text('${current['title']}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
-          ]),
-          const SizedBox(height: 18),
-          Text('${current['scope']}'),
-          if ((current['progress_percent'] as int) > 0) ...[
+        Container(padding: const EdgeInsets.all(18), margin: const EdgeInsets.only(top: 4),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18), border: Border.all(color: lineColor)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('$completed', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: brand, height: 1)),
+              Text(' / ${weeks.length}주 완료', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: subInk)),
+            ]),
             const SizedBox(height: 12),
-            Text('학습 진행률 ${current['progress_percent']}%', style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 5),
-            LinearProgressIndicator(value: (current['progress_percent'] as int) / 100,
-              minHeight: 7, borderRadius: BorderRadius.circular(7)),
-          ],
-          if ((current['remaining_scope'] as String).isNotEmpty) ...[
-            const SizedBox(height: 8), Text('남은 내용 · ${current['remaining_scope']}',
-              style: const TextStyle(color: Color(0xFFB15E38))),
-          ],
-          const SizedBox(height: 10), Text('함께 이야기하는 날 · ${current['meeting_date']}',
-            style: const TextStyle(color: Color(0xFF8B8F97), fontSize: 12)),
-          if ((current['review'] as List).isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Container(width: double.infinity, padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: const Color(0xFFFFF5E5), borderRadius: BorderRadius.circular(12)),
-              child: Text('지난주 복습 · ${(current['review'] as List).join(', ')}')),
-          ],
-          const SizedBox(height: 16),
-          SizedBox(width: double.infinity, child: FilledButton.icon(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => WeekPage(
-              studyId: widget.id, week: Map<String,dynamic>.from(current),
-              hasPdf: (study!['pdf_name'] as String).isNotEmpty))).then((_) => refresh()),
-            icon: const Icon(Icons.arrow_forward_rounded),
-            label: Text(current['active_session_id'] == null ? '이번 주 공부 시작하기' : '친구들과 대화 이어하기'))),
+            LinearProgressIndicator(value: weeks.isEmpty ? 0 : completed / weeks.length, minHeight: 8,
+              borderRadius: BorderRadius.circular(8), backgroundColor: brandSoft),
+            if (current != null) ...[
+              const SizedBox(height: 14),
+              Row(children: [
+                const Icon(Icons.event_outlined, size: 16, color: mutedInk), const SizedBox(width: 6),
+                Text('다음 모임 ${friendlyDate('${current['meeting_date']}')}',
+                  style: const TextStyle(fontSize: 13, color: subInk)),
+              ]),
+            ],
+          ])),
+        const SizedBox(height: 10),
+        Material(color: Colors.white, borderRadius: BorderRadius.circular(16), child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => LearningJourneyPage(studyId: widget.id))).then((_) => refresh()),
+          child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), border: Border.all(color: lineColor)),
+            child: const Row(children: [
+              Icon(Icons.insights_rounded, color: brand), SizedBox(width: 12),
+              Expanded(child: Text('복습·성장 기록', style: TextStyle(fontWeight: FontWeight.w600))),
+              Icon(Icons.chevron_right_rounded, color: mutedInk),
+            ])))),
+        Padding(padding: const EdgeInsets.fromLTRB(4, 24, 0, 8), child: Row(children: [
+          const Expanded(child: Text('주차별 계획', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: ink))),
+          TextButton.icon(onPressed: busy ? null : redraft,
+            icon: busy ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.auto_awesome_rounded, size: 16),
+            label: const Text('AI로 다시 짜기')),
         ])),
-        const SectionTitle('계획'),
-        Wrap(spacing: 10, runSpacing: 8, children: [
-          OutlinedButton.icon(onPressed: busy ? null : () => draft(), icon: const Icon(Icons.auto_awesome),
-            label: Text(busy ? '만드는 중...' : 'AI 계획 받기')),
-          OutlinedButton(onPressed: busy ? null : () => draft(true), child: const Text('남은 일정 재조정')),
-        ]),
-        SectionTitle('기록', detail: '${minutes.length}개'),
-        if (minutes.isEmpty) const SoftPanel(child: Text('아직 기록이 없어요.')),
-        ...minutes.map((m) => Card(child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-          leading: const CircleAvatar(backgroundColor: Color(0xFFF1EDFF),
-            child: Icon(Icons.description_outlined, color: Color(0xFF7C5CFC))),
-          title: Text('${m['week_no']}주차 이야기 기록', style: const TextStyle(fontWeight: FontWeight.w700)),
-          subtitle: Text('${m['minutes']['summary']}', maxLines: 2, overflow: TextOverflow.ellipsis),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SessionPage(id: m['session_id'])))))),
+        for (final w in weeks) Padding(padding: const EdgeInsets.only(bottom: 8),
+          child: weekRow(w as Map, identical(w, current))),
       ]));
   }
 }

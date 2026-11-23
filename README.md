@@ -54,6 +54,8 @@ PDF 없이 만들면 핵심 개념·원리와 예시·복습 순서의 기본 �
 | 파일 | 역할 |
 | --- | --- |
 | `backend/main.py` | FastAPI 앱 생성과 라우터 연결, 상태 확인 |
+| `backend/auth.py` | 이름·비밀번호 로그인, 토큰 확인, 내 스터디인지 권한 확인 |
+| `backend/routes/account.py` | 가입·로그인·로그아웃, 마이페이지, 모든 기록 한 번에 보기 API |
 | `backend/common.py` | 공통 상수, PDF 추출, 스터디·세션 조회, 교안 쪽 고르기 |
 | `backend/routes/studies.py` | 스터디 생성·채팅 목록·계획 수정 API |
 | `backend/routes/sessions.py` | 질문·힌트·답변(채팅 속 일정 변경 포함)·주차 마무리·지난 대화 API |
@@ -65,7 +67,7 @@ PDF 없이 만들면 핵심 개념·원리와 예시·복습 순서의 기본 �
 | `flutter_app/lib/api.dart` | 백엔드 호출 |
 | `flutter_app/lib/theme.dart` | 색상·크기 상수 |
 | `flutter_app/lib/widgets/` | 공통 위젯, 말풍선·프로필 등 채팅 위젯 |
-| `flutter_app/lib/pages/` | 채팅 목록, 채팅방, 스터디 만들기, 계획·기록 화면 |
+| `flutter_app/lib/pages/` | 로그인, 홈 탭(채팅·기록·마이), 채팅방, 스터디 만들기, 계획·기록 화면 |
 
 ## 구현 메모
 

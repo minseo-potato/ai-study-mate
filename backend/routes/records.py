@@ -1,13 +1,14 @@
 """학습 기록 API: 회의록, 복습 항목, 성장 리포트."""
 import json
 from datetime import datetime, timezone
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from auth import current_user
 from db import connect, dumps, loads
-from common import required, study_data
+from common import learning_messages, required, study_data
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(current_user)])
 
 
 @router.get("/studies/{study_id}/minutes")
@@ -64,23 +65,19 @@ def learning_report(study_id: int):
         for week in study["weeks"]:
             finished = [s for s in sessions if s["week_no"] == week["week_no"]]
             question_count = answer_count = 0
+            talks = {}
             for session in finished:
-                counts = db.execute(
-                    "SELECT role,COUNT(*) AS count FROM messages WHERE session_id=? "
-                    "AND role IN ('assistant','user') GROUP BY role", (session["id"],))
-                for row in counts:
-                    if row["role"] == "assistant":
-                        question_count += row["count"]
-                    else:
-                        answer_count += row["count"]
+                # 일정 변경 같은 운영 대화는 질문·답변 수와 처음 답변에서 뺀다.
+                talks[session["id"]] = learning_messages([dict(m) for m in db.execute(
+                    "SELECT role,body FROM messages WHERE session_id=? ORDER BY id", (session["id"],))])
+                question_count += sum(m["role"] == "assistant" for m in talks[session["id"]])
+                answer_count += sum(m["role"] == "user" for m in talks[session["id"]])
             total_questions += question_count
             total_answers += answer_count
             latest = finished[-1] if finished else None
             minutes = json.loads(latest["minutes"]) if latest and latest["minutes"] else {}
-            first_answer = db.execute(
-                "SELECT body FROM messages WHERE session_id=? AND role='user' ORDER BY id LIMIT 1",
-                (latest["id"],)).fetchone() if latest else None
-            baseline = (latest["initial_note"] if latest else "") or (first_answer["body"] if first_answer else "")
+            first_answer = next((m["body"] for m in talks[latest["id"]] if m["role"] == "user"), "") if latest else ""
+            baseline = (latest["initial_note"] if latest else "") or first_answer
             report_weeks.append({
                 "week_no": week["week_no"], "title": week["title"], "status": week["status"],
                 "initial_note": latest["initial_note"] if latest else "",
