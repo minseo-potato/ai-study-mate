@@ -108,6 +108,13 @@ class _RecordsPageState extends State<RecordsPage> {
                   if ('${w['summary']}'.trim().isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8),
                     child: Text('${w['summary']}', maxLines: 3, overflow: TextOverflow.ellipsis,
                       style: const TextStyle(height: 1.5, color: subInk))),
+                  if ((w['keywords'] as List? ?? []).isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10),
+                    child: KeywordChips((w['keywords'] as List).take(4).toList())),
+                  if ((w['stats'] as Map? ?? {}).isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(
+                    '질문 ${w['stats']['questions'] ?? 0} · 답변 ${w['stats']['answers'] ?? 0}'
+                    '${(w['stats']['hints'] ?? 0) > 0 ? ' · 힌트 ${w['stats']['hints']}' : ''}'
+                    '${(w['stats']['reviews'] ?? 0) > 0 ? ' · 복습 ${w['stats']['reviews']}' : ''}',
+                    style: const TextStyle(fontSize: 12, color: mutedInk))),
                 ])))))),
         ])),
     ))));

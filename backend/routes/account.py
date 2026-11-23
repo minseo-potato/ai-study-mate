@@ -109,5 +109,6 @@ def my_records(user: dict = Depends(current_user)):
                 " WHERE st.user_id=? AND s.status='finished' ORDER BY s.id DESC LIMIT 100", (user["id"],)):
             minutes = json.loads(row["minutes"]) if row["minutes"] else {}
             weeks.append({k: row[k] for k in ("session_id", "study_id", "study_title", "week_no", "title")}
-                         | {"summary": minutes.get("summary", "")})
+                         | {"summary": minutes.get("summary", ""), "keywords": minutes.get("keywords", []),
+                            "stats": minutes.get("stats", {}), "learned": minutes.get("learned", [])[:2]})
         return {"reviews": reviews, "weeks": weeks}

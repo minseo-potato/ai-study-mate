@@ -13,6 +13,8 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
   Map<String, dynamic>? report;
   List<dynamic> reviews = [];
   bool busy = false, showDone = false;
+  /// 문답을 펼쳐 본 주차 번호들.
+  final openQa = <int>{};
   @override void initState() { super.initState(); refresh(); }
   Future<void> refresh() async {
     try {
@@ -69,6 +71,14 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
     final summary = '${week['summary'] ?? ''}'.trim();
     final baseline = '${week['baseline_text'] ?? ''}'.trim();
     final revised = '${week['revised_note'] ?? ''}'.trim();
+    final keywords = (week['keywords'] as List?) ?? [];
+    final learned = (week['learned'] as List?) ?? [];
+    final gaps = (week['gaps'] as List?) ?? [];
+    final highlight = '${week['highlight'] ?? ''}'.trim();
+    final qa = ((week['qa'] as List?) ?? []).where((p) => '${p['question']}'.isNotEmpty).toList();
+    final weekNo = week['week_no'] as int;
+    final hints = week['hint_count'] ?? 0;
+    final richRecord = learned.isNotEmpty || gaps.isNotEmpty || highlight.isNotEmpty;
     return Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(16), decoration: cardDecoration,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -78,13 +88,48 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
           const SizedBox(width: 8),
           Expanded(child: Text('${week['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
-          Text('질문 ${week['question_count']} · 답변 ${week['answer_count']}',
+          Text('질문 ${week['question_count']} · 답변 ${week['answer_count']}${hints > 0 ? ' · 힌트 $hints' : ''}',
             style: const TextStyle(fontSize: 12, color: mutedInk)),
         ]),
         if (summary.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10),
           child: Text(summary, style: const TextStyle(height: 1.55, color: ink))),
-        if (baseline.isNotEmpty) note('${week['baseline_label']}', baseline, pageBg),
+        if (keywords.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: KeywordChips(keywords)),
+        if (highlight.isNotEmpty) Container(
+          width: double.infinity, margin: const EdgeInsets.only(top: 12), padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(color: pageBg, borderRadius: BorderRadius.circular(12),
+            border: const Border(left: BorderSide(color: brand, width: 3))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('가장 잘 설명한 말', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: subInk)),
+            const SizedBox(height: 4),
+            Text('“$highlight”', style: const TextStyle(height: 1.5, fontSize: 14, color: ink)),
+          ])),
+        if (learned.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 14), child: NoteList(
+          title: '내가 설명한 것', items: learned, icon: Icons.check_circle_rounded, color: const Color(0xFF12B886))),
+        if (gaps.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 14), child: NoteList(
+          title: '더 다질 것', items: gaps, icon: Icons.flag_rounded, color: const Color(0xFFF59F00))),
+        // 예전 기록처럼 정리 항목이 없을 때만 처음·마지막 메모를 보여 준다.
+        if (!richRecord && baseline.isNotEmpty) note('${week['baseline_label']}', baseline, pageBg),
         if (revised.isNotEmpty) note('마치며 다시 정리', revised, const Color(0xFFEFFAF5)),
+        if (qa.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: () => setState(() => openQa.contains(weekNo) ? openQa.remove(weekNo) : openQa.add(weekNo)),
+            style: TextButton.styleFrom(foregroundColor: subInk, padding: EdgeInsets.zero),
+            icon: Icon(openQa.contains(weekNo) ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18),
+            label: Text('문답 다시 보기 ${qa.length}', style: const TextStyle(fontSize: 13))),
+          if (openQa.contains(weekNo)) for (final p in qa) Container(
+            width: double.infinity, margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: pageBg, borderRadius: BorderRadius.circular(12)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Q. ${p['question']}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.45)),
+              const SizedBox(height: 6),
+              Text('${p['answer']}'.trim().isEmpty ? '답하지 않고 넘어갔어요' : 'A. ${p['answer']}',
+                style: TextStyle(fontSize: 13.5, height: 1.45,
+                  color: '${p['answer']}'.trim().isEmpty ? mutedInk : ink)),
+              if (p['hint'] == true) const Padding(padding: EdgeInsets.only(top: 4),
+                child: Text('힌트를 받았어요', style: TextStyle(fontSize: 12, color: Color(0xFFF59F00)))),
+            ])),
+        ],
       ]));
   }
 

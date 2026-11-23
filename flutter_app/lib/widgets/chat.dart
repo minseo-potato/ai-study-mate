@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../theme.dart';
 import 'avatar.dart';
+import 'common.dart';
 
 /// AI 스터디원 프로필(아이콘·색은 직접 바꿀 수 있고, 기본값은 역할별 모양).
 class PeerAvatar extends StatelessWidget {
@@ -106,6 +107,8 @@ class StudySummaryCard extends StatelessWidget {
     final raw = session['minutes'] as String? ?? '';
     final minutes = raw.isEmpty ? <String, dynamic>{} : jsonDecode(raw) as Map<String, dynamic>;
     final checks = (minutes['next_checks'] as List?) ?? [];
+    final keywords = (minutes['keywords'] as List?) ?? [];
+    final learned = ((minutes['learned'] as List?) ?? []).take(2).toList();
     return Center(child: Container(margin: const EdgeInsets.only(top: 16), constraints: const BoxConstraints(maxWidth: 520),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18),
         boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2))]),
@@ -117,16 +120,11 @@ class StudySummaryCard extends StatelessWidget {
         ])),
         Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${minutes['summary'] ?? ''}', style: const TextStyle(height: 1.55, color: ink)),
-          if (checks.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            const Text('다음에 다시 볼 것', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: mutedInk)),
-            ...checks.map((x) => Padding(padding: const EdgeInsets.only(top: 6), child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Padding(padding: EdgeInsets.only(top: 3), child: Icon(Icons.bookmark_rounded, size: 14, color: brand)),
-                const SizedBox(width: 6),
-                Expanded(child: Text('$x', style: const TextStyle(height: 1.45, fontSize: 13.5))),
-              ]))),
-          ],
+          if (keywords.isNotEmpty) ...[const SizedBox(height: 10), KeywordChips(keywords)],
+          if (learned.isNotEmpty) ...[const SizedBox(height: 14), NoteList(title: '내가 설명한 것', items: learned,
+            icon: Icons.check_circle_rounded, color: const Color(0xFF12B886))],
+          if (checks.isNotEmpty) ...[const SizedBox(height: 14), NoteList(title: '다음에 다시 볼 것', items: checks,
+            icon: Icons.bookmark_rounded, color: brand)],
         ])),
       ])));
   }

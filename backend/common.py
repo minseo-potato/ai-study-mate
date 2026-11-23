@@ -13,7 +13,7 @@ PERSPECTIVES = ["개념과 정의", "예시와 적용", "앞 주차와의 연결
 LEVELS = ["기초", "중급", "심화", "중급"]
 
 
-PEER_NAMES = ["지식이", "사례이", "융합이", "탐구이"]
+PEER_NAMES = ["서윤", "도현", "하은", "지호"]
 
 
 INITIAL_UNDERSTANDING = [
@@ -66,6 +66,30 @@ def learning_messages(messages: list) -> list:
             continue
         out.append(m)
     return out
+
+
+def build_qa(talk: list) -> list:
+    """학습 대화에서 질문 → 내 답(없으면 빈 문자열) 짝을 만든다. 힌트를 받았는지도 함께 적는다."""
+    pairs = []
+    for m in talk:
+        if m["role"] == "assistant":
+            pairs.append({"question": m["body"], "answer": "", "member_no": m.get("member_no"), "hint": False})
+        elif m["role"] == "assistant_hint" and pairs:
+            pairs[-1]["hint"] = True
+        elif m["role"] == "user" and pairs and not pairs[-1]["answer"]:
+            pairs[-1]["answer"] = m["body"]
+    return pairs
+
+
+def qa_stats(qa: list) -> dict:
+    return {"questions": len(qa), "answers": sum(bool(p["answer"]) for p in qa),
+            "hints": sum(p["hint"] for p in qa)}
+
+
+def clean_list(value, limit: int, size: int = 200) -> list:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(str(x).strip()[:size] for x in value if str(x).strip()))[:limit]
 
 
 def with_persona(member: dict) -> dict:

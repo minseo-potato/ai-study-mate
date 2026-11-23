@@ -84,10 +84,67 @@ DEMO_HINTS = {
 }
 
 
+JOSA = ("이라고", "에서는", "으로는", "이고", "이며", "라고", "에서", "으로", "에게", "까지", "부터", "처럼", "보다", "라는", "이라는", "이에요", "예요",
+        "입니다", "은", "는", "이", "가", "을", "를", "의", "에", "로", "와", "과", "도", "만", "요")
+STOPWORDS = {"그리고", "그래서", "그런데", "하지만", "이번", "정말", "그냥", "있어요", "같아요", "생각", "생각해요", "것", "수",
+             "때", "등", "더", "잘", "좀", "제가", "저는", "우리", "이건", "그건", "이거", "그거", "어떻게", "무엇", "뭐",
+             "있다", "없다", "한다", "합니다", "해요", "돼요", "된다", "모르겠어요", "모르겠습니다", "같습니다", "이다",
+             "중인", "있는", "없는", "하는", "되는", "같은", "다른", "이런", "그런", "어떤", "주는", "나눈", "나눠",
+             "것이라", "때문에", "이라", "라서", "해서", "하고", "그래도", "아니라", "많이", "조금", "먼저", "다시"}
+UNSURE = ("모르", "글쎄", "헷갈", "잘 모", "아직")
+
+
+def demo_keywords(texts: list, prefer: str) -> list:
+    """답변에서 자주 나온 단어를 핵심어로 고른다(주제·범위에 들어 있는 단어를 먼저)."""
+    import re
+    counts = {}
+    for text in texts:
+        for word in re.findall(r"[가-힣A-Za-z][가-힣A-Za-z0-9]+", text):
+            for josa in JOSA:
+                if word.endswith(josa) and len(word) - len(josa) >= 2:
+                    word = word[: -len(josa)]
+                    break
+            if len(word) >= 2 and word not in STOPWORDS:
+                counts[word] = counts.get(word, 0) + 1 + (2 if word in prefer else 0)
+    return [w for w, _ in sorted(counts.items(), key=lambda kv: -kv[1])][:5]
+
+
+def demo_minutes(payload: dict) -> dict:
+    topic = demo_topic(payload)
+    qa = payload.get("qa") or []
+    answered = [p for p in qa if p["answer"].strip()]
+    weak = [p for p in answered if len(p["answer"].strip()) < 12 or any(t in p["answer"] for t in UNSURE)]
+    strong = [p for p in answered if p not in weak]
+    week = payload.get("week") or {}
+    # 핵심 개념은 내 답변에서만 뽑는다. 주제·교안 범위에 나오는 단어는 앞으로 올린다
+    # (기본 주차 제목처럼 내용 없는 말은 기준에서 뺀다).
+    prefer = str(payload.get("study_goal") or "")
+    if str(week.get("title", "")) not in GENERIC_WEEK_TITLES:
+        prefer += f" {week.get('title', '')} {week.get('scope', '')}"
+    keywords = demo_keywords([p["answer"] for p in answered], prefer)
+    gaps = [f"'{p['question'][:50]}'에 아직 자신 있게 답하지 못했어요." for p in weak]
+    gaps += [f"'{p['question'][:50]}'는 답하지 못하고 넘어갔어요." for p in qa if not p["answer"].strip()]
+    gaps += [f"'{p['question'][:50]}'에서 힌트를 받았어요." for p in strong if p["hint"]]
+    highlight = max((p["answer"] for p in strong), key=len, default="")
+    parts = [f"'{topic}'를 주제로 질문 {len(qa)}개 중 {len(answered)}개에 답했어요."]
+    if keywords:
+        parts.append(f"{', '.join(keywords[:3])}을(를) 중심으로 설명했어요.")
+    if gaps:
+        parts.append(f"{len(gaps)}가지는 다음에 다시 짚어 보기로 했어요.")
+    return {"summary": " ".join(parts), "keywords": keywords,
+            "learned": [f"{p['answer'].strip()[:90]}" for p in strong][:4],
+            "gaps": gaps[:4], "highlight": highlight[:300],
+            "next_checks": payload["unanswered"]}
+
+
+# 교안 없이 만든 스터디의 기본 주차 제목. 내용을 말해 주지 않으므로 주제로 쓰지 않는다.
+GENERIC_WEEK_TITLES = {"핵심 개념 찾기", "원리와 예시", "설명과 복습", "학습 목표 정리", "복습과 심화"}
+
+
 def demo_topic(payload: dict) -> str:
-    """주차 제목이 'N주차'처럼 비어 있으면 학습 목표를 주제로 쓴다."""
+    """주차 제목이 'N주차'나 기본 제목이면 학습 목표를 주제로 쓴다."""
     title = str((payload.get("week") or {}).get("title") or "").strip()
-    if title and not title.endswith("주차"):
+    if title and not title.endswith("주차") and title not in GENERIC_WEEK_TITLES:
         return title[:30]
     return str(payload.get("study_goal") or payload.get("goal") or "이번 주 내용")[:30]
 
@@ -117,10 +174,7 @@ def demo_response(instructions: str, payload: dict) -> dict:
         return {"explanation": f"괜찮아요, 같이 생각해 봐요. {tip}" + (" 교안도 다시 살펴보면 좋아요." if pages else ""),
                 "page_no": pages[0]["page_no"] if pages else None}
     if "랩미팅 회의록" in instructions:
-        questions = [m["body"] for m in payload["messages"] if m["role"] == "assistant"]
-        topic = demo_topic(payload)
-        return {"summary": f"'{topic}'에 대해 질문 {len(questions)}개를 함께 이야기했다.",
-                "next_checks": payload["unanswered"]}
+        return demo_minutes(payload)
     if "완료하지 못한 범위" in instructions:
         return {"weeks": [{"week_no": w["week_no"], "title": w["title"], "scope": w["scope"]}
                           for w in payload["remaining"]]}

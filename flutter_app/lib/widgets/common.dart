@@ -73,3 +73,33 @@ class LevelPicker extends StatelessWidget {
     return compact ? child : Expanded(child: child);
   }
 }
+
+/// 기록에 쓰는 핵심 개념 칩 줄.
+class KeywordChips extends StatelessWidget {
+  final List items;
+  const KeywordChips(this.items, {super.key});
+  @override Widget build(BuildContext context) => Wrap(spacing: 6, runSpacing: 6, children: [
+    for (final k in items) Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(20)),
+      child: Text('#$k', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w600))),
+  ]);
+}
+
+/// 아이콘이 붙은 짧은 목록(내가 설명한 것, 더 다질 것 등).
+class NoteList extends StatelessWidget {
+  final String title;
+  final List items;
+  final IconData icon;
+  final Color color;
+  const NoteList({super.key, required this.title, required this.items, required this.icon, required this.color});
+  @override Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(title, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: mutedInk)),
+    for (final x in items) Padding(padding: const EdgeInsets.only(top: 6), child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.only(top: 3), child: Icon(icon, size: 14, color: color)),
+        const SizedBox(width: 6),
+        Expanded(child: Text('$x', style: const TextStyle(height: 1.45, fontSize: 13.5, color: ink))),
+      ])),
+  ]);
+}

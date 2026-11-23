@@ -320,7 +320,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual((study["goal"], len(study["weeks"]), study["hours_per_week"]), ("운영체제", 4, 3))
             members = study["members"]
             self.assertEqual([(m["name"], m["perspective"], m["level"]) for m in members],
-                             [("케이스", "예시와 적용", "기초"), ("탐구이", "다른 해석", "심화")])
+                             [("케이스", "예시와 적용", "기초"), ("지호", "다른 해석", "심화")])
             self.assertEqual(members[0]["persona"]["role"], "사례 찾기")
             edited = client.put(f"/studies/{study['id']}/members/2", json={"name": "반례왕", "level": "중급"})
             self.assertEqual(edited.status_code, 200, edited.text)
@@ -380,6 +380,12 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(batch.json()["weeks"][2]["title"], "베이즈")
             records = alice.get("/me/records").json()
             self.assertEqual(records["weeks"][0]["study_title"], "확률")
+            self.assertIn("확률", records["weeks"][0]["keywords"])
+            self.assertEqual(records["weeks"][0]["stats"]["answers"], 1)
+            report_week = alice.get(f"/studies/{study['id']}/learning-report").json()["weeks"][0]
+            self.assertEqual(len(report_week["qa"]), 1)
+            self.assertIn("가능성", report_week["learned"][0])
+            self.assertIn("가능성", report_week["highlight"])
             me = alice.get("/me").json()
             self.assertEqual((me["user"]["name"], me["stats"]["completed_weeks"], me["stats"]["answers"]), ("앨리스", 1, 1))
             self.assertEqual(alice.put("/me", json={"name": "바비"}).status_code, 409)

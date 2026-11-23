@@ -85,6 +85,10 @@ def learning_report(study_id: int):
                 "baseline_label": "대화 전 내 생각" if latest and latest["initial_note"] else "처음 남긴 답변",
                 "revised_note": latest["revised_note"] if latest else "",
                 "summary": minutes.get("summary", ""),
+                "keywords": minutes.get("keywords", []), "learned": minutes.get("learned", []),
+                "gaps": minutes.get("gaps", []), "highlight": minutes.get("highlight", ""),
+                "qa": minutes.get("qa", []), "next_checks": minutes.get("next_checks", []),
+                "hint_count": (minutes.get("stats") or {}).get("hints", 0),
                 "question_count": question_count, "answer_count": answer_count,
                 "source_pages": minutes.get("source_pages", []),
                 "open_reviews": sum(r["status"] == "open" and r["source_week"] == week["week_no"]

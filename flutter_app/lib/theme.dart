@@ -20,7 +20,7 @@ const peerRoleIntros = [
   '앞에서 배운 내용과 이어 줘요',
   '왜 그런지, 다른 경우는 없는지 파고들어요',
 ];
-const peerDefaultNames = ['지식이', '사례이', '융합이', '탐구이'];
+const peerDefaultNames = ['서윤', '도현', '하은', '지호'];
 const peerAccents = [Color(0xFFFF7A45), Color(0xFF12B886), Color(0xFFF06595), Color(0xFFF59F00)];
 const peerLevels = ['기초', '중급', '심화'];
 

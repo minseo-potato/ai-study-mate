@@ -5,7 +5,7 @@ import ai
 from auth import current_user
 import planner
 from db import connect, dumps, loads
-from common import PEER_RULES, learning_messages, required, session_data, source_pages, study_data
+from common import PEER_RULES, build_qa, clean_list, learning_messages, qa_stats, required, session_data, source_pages, study_data
 
 
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -340,22 +340,31 @@ async def finish(session_id: int, body: Finish):
         pending = list(session["unanswered"])
         if session["messages"] and session["messages"][-1]["role"] in ("assistant", "assistant_hint"):
             pending.append(next(m["body"] for m in reversed(session["messages"]) if m["role"] == "assistant"))
+        qa = build_qa(talk)
     summary = await ai.generate_json(
-        "랩미팅 회의록을 한국어로 요약하세요. JSON 키는 summary, next_checks입니다. "
-        "summary는 이번 주 주제(week.title)에 대해 사용자가 무엇을 설명했고 어떤 부분이 분명해졌는지 두세 문장으로 쓰세요. "
-        "일정·계획 변경(assistant_plan) 대화는 학습 내용이 아니므로 요약에서 빼세요. "
-        "사용자 발언과 AI 질문을 구별하고, 근거 없는 사실을 확정하지 마세요. "
-        "next_checks는 다음 주에 다시 확인할 질문 문자열 배열이며, 이미 충분히 답한 내용은 넣지 마세요.",
-        {"study_goal": study["goal"], "week": week,
+        "랩미팅 회의록을 한국어로 정리하세요. 학습 기록으로 남아 나중에 다시 보는 용도입니다. "
+        "JSON 키는 summary, keywords, learned, gaps, highlight, next_checks입니다. "
+        "summary: 이번 주 주제(week.title)에 대해 사용자가 무엇을 설명했고 무엇이 분명해졌는지 두세 문장. "
+        "keywords: 이번 대화에서 다룬 핵심 개념 3~6개(짧은 명사). "
+        "learned: 사용자가 실제로 설명해 낸 내용을 사용자 입장에서 한 문장씩, 최대 4개('~를 ~라고 설명했다' 형태). "
+        "gaps: 답이 부족했거나 헷갈려 한 부분을 구체적으로 한 문장씩, 최대 4개. "
+        "highlight: 사용자 답변 중 가장 잘 설명한 문장 하나를 그대로 인용(없으면 빈 문자열). "
+        "next_checks: 다음 주에 다시 확인할 질문 배열이며, 이미 충분히 답한 내용은 넣지 마세요. "
+        "qa에 질문과 사용자 답이 짝지어 있습니다. 일정·계획 변경 대화는 학습 내용이 아니므로 빼고, "
+        "사용자가 말하지 않은 내용을 사용자가 설명했다고 쓰지 마세요.",
+        {"study_goal": study["goal"], "week": week, "qa": qa,
          "initial_note": session["initial_note"], "revised_note": body.revised_note,
          "messages": talk, "unanswered": pending, "source_pages": pages},
     )
-    checks = summary.get("next_checks", [])
-    if not isinstance(checks, list):
-        checks = []
-    checks = list(dict.fromkeys(str(x).strip()[:500] for x in pending + checks
-                                    if str(x).strip()))[:20]
+    checks = list(dict.fromkeys(str(x).strip()[:500] for x in pending + clean_list(summary.get("next_checks"), 20, 500)
+                                if str(x).strip()))[:20]
+    highlight = str(summary.get("highlight") or "").strip()[:300]
     minutes = {"summary": str(summary.get("summary", "")), "source_pages": [p["page_no"] for p in pages],
+               "keywords": clean_list(summary.get("keywords"), 6, 30),
+               "learned": clean_list(summary.get("learned"), 4),
+               "gaps": clean_list(summary.get("gaps"), 4),
+               "highlight": highlight if any(highlight and highlight in p["answer"] for p in qa) else "",
+               "qa": qa, "stats": {**qa_stats(qa), "reviews": len(checks)},
                "initial_note": session["initial_note"], "revised_note": body.revised_note,
                "messages": session["messages"], "next_checks": checks}
     with connect() as db:
