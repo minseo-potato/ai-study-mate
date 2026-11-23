@@ -12,6 +12,7 @@ from pypdf import PdfReader
 from fastapi.middleware.cors import CORSMiddleware
 
 from ai import demo_mode, generate_json
+import planner
 from db import connect, dumps, loads, obj
 
 app = FastAPI(title="AI 스터디메이트")
@@ -492,10 +493,31 @@ class Answer(BaseModel):
 
 @app.post("/sessions/{session_id}/answer")
 async def answer(session_id: int, body: Answer):
+    text = body.text.strip()
     with connect() as db:
         session = session_data(db, session_id)
-        if session["status"] != "active" or not session["messages"] or session["messages"][-1]["role"] not in ("assistant", "assistant_hint"):
-            raise HTTPException(409, "답할 질문이 없습니다.")
+        if session["status"] != "active":
+            raise HTTPException(409, "종료된 대화입니다.")
+        study = study_data(db, session["study_id"])
+    # 일정·계획 변경 같은 운영 요청은 채팅에서 바로 반영하고 스터디원이 확인 메시지를 남긴다.
+    command = await planner.parse(text, session["week_no"], len(study["weeks"]), study["weeks"])
+    if command:
+        with connect() as db:
+            reply = await planner.apply(db, study_data(db, session["study_id"]), command, session["week_no"])
+            speaker = (session["next_member"] - 1) % max(1, len(study["members"])) + 1
+            db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (session_id, "user", text))
+            db.execute("INSERT INTO messages(session_id,role,member_no,body) VALUES(?,?,?,?)",
+                       (session_id, "assistant_plan", speaker, reply or "알겠어요!"))
+            response = session_data(db, session_id)
+            response["plan_changed"] = True
+            return response
+    if not session["messages"] or session["messages"][-1]["role"] not in ("assistant", "assistant_hint"):
+        # 질문이 없을 때 보낸 말은 대화로 남기고, 다음 질문이 이를 이어받는다.
+        with connect() as db:
+            db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (session_id, "user", text))
+            return session_data(db, session_id)
+    with connect() as db:
+        session = session_data(db, session_id)
         question = next(m for m in reversed(session["messages"]) if m["role"] == "assistant")
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
