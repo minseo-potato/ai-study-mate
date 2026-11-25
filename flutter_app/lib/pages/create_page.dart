@@ -1,11 +1,11 @@
 import 'dart:convert';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../theme.dart';
 import '../widgets/avatar.dart';
 import '../widgets/chat.dart';
 import '../widgets/common.dart';
+import '../widgets/files.dart';
 
 /// 새 스터디 만들기. 주제만 적으면 바로 시작할 수 있고, 나머지는 눌러서 고르는 값만 둔다.
 class CreatePage extends StatefulWidget {
@@ -30,18 +30,15 @@ class _CreatePageState extends State<CreatePage> {
   static const weekChoices = [2, 4, 6, 8, 12];
   int weeks = 4;
   DateTime start = DateTime.now();
-  PlatformFile? pdf;
+  PickedFile? pdf;
   bool busy = false;
   @override void dispose() { title.dispose(); super.dispose(); }
 
   bool get canSubmit => title.text.trim().isNotEmpty && friends.any((f) => f.joined) && !busy;
 
   Future<void> pickPdf() async {
-    final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (picked == null || !mounted) return;
-    final file = picked.files.single;
-    if (file.size > 10000000) { errorMessage(context, '10MB 이하의 PDF를 선택해 주세요.'); return; }
-    setState(() => pdf = file);
+    final files = await pickFiles(context, multiple: false);
+    if (files.isNotEmpty && mounted) setState(() => pdf = files.first);
   }
 
   Future<void> pickStart() async {
@@ -53,7 +50,7 @@ class _CreatePageState extends State<CreatePage> {
 
   Future<void> rename(_Friend friend) async {
     final edit = await showProfileEditor(context, title: 'AI 친구 프로필',
-      subtitle: '${peerRoleLabels[friend.role]} · ${peerRoleIntros[friend.role]}',
+      subtitle: peerRoleLabels[friend.role],
       name: friend.name, avatar: memberAvatar(friend.asMember), nameMax: 12);
     if (edit != null) setState(() { friend.name = edit.name; friend.avatar = edit.avatar.code; });
   }
@@ -102,9 +99,6 @@ class _CreatePageState extends State<CreatePage> {
                 child: Text(peerRoleLabels[f.role], style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
                   color: memberAccent(f.asMember)))),
             ]),
-            const SizedBox(height: 3),
-            Text(peerRoleIntros[f.role], maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12.5, color: mutedInk)),
           ]))),
         Switch(value: f.joined, onChanged: (v) => setState(() => f.joined = v)),
       ]),
@@ -114,7 +108,7 @@ class _CreatePageState extends State<CreatePage> {
 
   @override Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('새 스터디')),
-    body: Column(children: [
+    body: FileDropArea(enabled: !busy, onFiles: (files) => setState(() => pdf = files.first), child: Column(children: [
       Expanded(child: PageContent(children: [
         const Padding(padding: EdgeInsets.fromLTRB(4, 12, 4, 14),
           child: Text('무엇을 함께 공부할까요?', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: ink))),
@@ -128,12 +122,12 @@ class _CreatePageState extends State<CreatePage> {
           child: Container(padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE1E3E8))),
             child: Row(children: [
-              Icon(pdf == null ? Icons.upload_file_rounded : Icons.picture_as_pdf_rounded,
-                color: pdf == null ? mutedInk : const Color(0xFFE03131)),
+              Icon(pdf == null ? Icons.upload_file_rounded : Icons.description_rounded,
+                color: pdf == null ? mutedInk : brand),
               const SizedBox(width: 12),
-              Expanded(child: Text(pdf?.name ?? '교안 PDF 올리기 (선택)', maxLines: 1, overflow: TextOverflow.ellipsis,
+              Expanded(child: Text(pdf?.name ?? '교안 올리기', maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: pdf == null ? mutedInk : ink))),
-              if (pdf != null) IconButton(tooltip: 'PDF 빼기', icon: const Icon(Icons.close_rounded, size: 20),
+              if (pdf != null) IconButton(tooltip: '교안 빼기', icon: const Icon(Icons.close_rounded, size: 20),
                 onPressed: busy ? null : () => setState(() => pdf = null))
               else const SizedBox(height: 24),
             ])))),
@@ -170,6 +164,6 @@ class _CreatePageState extends State<CreatePage> {
           child: Padding(padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
             child: SizedBox(width: double.infinity, child: FilledButton(onPressed: canSubmit ? submit : null,
               child: Text(busy ? '만드는 중...' : '시작하기')))))))),
-    ]),
+    ])),
   );
 }

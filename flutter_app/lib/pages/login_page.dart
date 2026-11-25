@@ -15,7 +15,7 @@ class _LoginPageState extends State<LoginPage> {
   bool signup = false, busy = false, hidden = true;
   @override void dispose() { name.dispose(); password.dispose(); passwordFocus.dispose(); super.dispose(); }
 
-  bool get valid => name.text.trim().length >= 2 && password.text.length >= 4;
+  bool get valid => name.text.trim().length >= 2 && password.text.length >= (signup ? 8 : 4);
 
   Future<void> submit() async {
     if (!valid || busy) return;
@@ -53,7 +53,7 @@ class _LoginPageState extends State<LoginPage> {
           TextField(controller: password, focusNode: passwordFocus, obscureText: hidden, maxLength: 64,
             onChanged: (_) => setState(() {}), onSubmitted: (_) => submit(),
             autofillHints: [signup ? AutofillHints.newPassword : AutofillHints.password],
-            decoration: InputDecoration(hintText: '비밀번호 (4자 이상)', counterText: '',
+            decoration: InputDecoration(hintText: signup ? '비밀번호 (8자 이상)' : '비밀번호', counterText: '',
               prefixIcon: const Icon(Icons.lock_outline_rounded),
               suffixIcon: IconButton(tooltip: hidden ? '비밀번호 보기' : '비밀번호 숨기기',
                 icon: Icon(hidden ? Icons.visibility_outlined : Icons.visibility_off_outlined, size: 20),

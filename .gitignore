@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.sqlite3
 .env
+backend/env
 .dart_tool/
 build/
 flutter_app/.flutter-plugins*

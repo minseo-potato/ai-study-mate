@@ -14,12 +14,6 @@ const chatMaxWidth = 760.0;
 /// AI 스터디원 역할. 서버의 perspective 값과 같은 순서다.
 const peerRoles = ['개념과 정의', '예시와 적용', '앞 주차와의 연결', '다른 해석'];
 const peerRoleLabels = ['개념 정리', '사례 찾기', '흐름 연결', '깊이 파기'];
-const peerRoleIntros = [
-  '용어와 원리를 정확하게 짚어요',
-  '실제 예시로 바꿔 생각해요',
-  '앞에서 배운 내용과 이어 줘요',
-  '왜 그런지, 다른 경우는 없는지 파고들어요',
-];
 const peerDefaultNames = ['서윤', '도현', '하은', '지호'];
 const peerAccents = [Color(0xFFFF7A45), Color(0xFF12B886), Color(0xFFF06595), Color(0xFFF59F00)];
 const peerLevels = ['기초', '중급', '심화'];

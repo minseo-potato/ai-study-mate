@@ -6,9 +6,10 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 import ai
+import guard
 from auth import current_user
 from db import connect
-from common import AVATAR_PATTERN, INITIAL_UNDERSTANDING, LEVELS, MEMBER_LEVELS, PEER_NAMES, PERSPECTIVES, read_pdf, required, study_data
+from common import AVATAR_PATTERN, INITIAL_UNDERSTANDING, LEVELS, MEMBER_LEVELS, PEER_NAMES, PERSPECTIVES, add_file_message, clean_speech, read_file, required, study_data
 
 
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -39,7 +40,8 @@ def list_studies(user: dict = Depends(current_user)):
                 k: week[k] for k in ("week_no", "title", "meeting_date")}
             msg = last.get(item["id"])
             item["last_message"] = None if msg is None else {
-                "body": msg["body"], "mine": msg["role"] == "user", "name": msg["name"] or ""}
+                "body": f"파일: {msg['body']}" if msg["role"] == "user_file" else msg["body"] if msg["role"] == "user" else clean_speech(msg["body"], [dict(msg)]),
+                "mine": msg["role"].startswith("user"), "name": msg["name"] or ""}
         return items
 
 
@@ -62,7 +64,7 @@ class StudyDetails(BaseModel):
 def edit_study_details(study_id: int, body: StudyDetails):
     with connect() as db:
         study = required(db, "SELECT * FROM studies WHERE id=?", (study_id,))
-        title = study["title"] if body.title is None else body.title.strip()
+        title = study["title"] if body.title is None else guard.clean_label(body.title, 120)
         if not title:
             raise HTTPException(400, "채팅방 이름을 입력해 주세요.")
         archived = study["archived"] if body.archived is None else int(body.archived)
@@ -74,7 +76,7 @@ def edit_study_details(study_id: int, body: StudyDetails):
 
 @router.put("/studies/{study_id}/pdf")
 async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
-    pages = await read_pdf(pdf)
+    pages, size = await read_file(pdf)
     with connect() as db:
         study = required(db, "SELECT * FROM studies WHERE id=?", (study_id,))
         db.execute("INSERT INTO page_history(study_id,pdf_version,page_no,body,pdf_name) "
@@ -82,8 +84,11 @@ async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
                    (study["pdf_version"], study["pdf_name"], study_id))
         db.execute("DELETE FROM pages WHERE study_id=?", (study_id,))
         db.executemany("INSERT INTO pages VALUES(?,?,?)", [(study_id, n, text) for n, text in pages])
-        db.execute("UPDATE studies SET pdf_name=?,pdf_version=pdf_version+1 WHERE id=?",
-                   (pdf.filename, study_id))
+        db.execute("UPDATE studies SET pdf_name=?,pdf_size=?,pdf_version=pdf_version+1 WHERE id=?",
+                   (guard.clean_filename(pdf.filename), size, study_id))
+        active = db.execute("SELECT id FROM sessions WHERE study_id=? AND status='active' ORDER BY id DESC LIMIT 1", (study_id,)).fetchone()
+        if active:
+            add_file_message(db, study_id, active["id"], guard.clean_filename(pdf.filename), size, pages)
         for week in db.execute("SELECT week_no,scope FROM weeks WHERE study_id=? AND status!='complete'", (study_id,)):
             if study["pdf_name"] and not re.fullmatch(r"\d+\s*[~\-]\s*\d+\s*쪽", week["scope"]):
                 continue
@@ -94,20 +99,39 @@ async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
         return study_data(db, study_id)
 
 
+async def first_plan(title: str, goal: str, weeks: int, pages: list) -> dict:
+    """주제에 맞는 주차별 제목과 범위를 정한다. AI를 쓸 수 없으면 주차 번호만 쓴다."""
+    if ai.demo_mode():
+        return {}
+    try:
+        result = await ai.generate_json(
+            "한국어 주간 학습 계획을 제안하세요. JSON 키는 weeks이며 항목은 week_no,title,scope입니다. 주차 수를 정확히 맞추세요. "
+            "title은 그 주에 실제로 다룰 내용 이름(15자 안팎), scope는 공부할 것을 구체적으로 한 문장으로 쓰세요. "
+            "마지막 주는 그동안 공부한 것을 발표하고 피드백받는 주입니다. 교안이 있으면 쪽 순서를 나눈 흐름을 따르세요.",
+            {"title": title, "goal": goal, "weeks": [{"week_no": n, "title": "", "scope": ""} for n in range(1, weeks + 1)],
+             "pages": [{"page_no": n, "body": text[:500]} for n, text in pages[:30]]})
+        return {w["week_no"]: w for w in result.get("weeks", []) if isinstance(w, dict) and isinstance(w.get("week_no"), int)}
+    except Exception:
+        return {}
+
+
 @router.post("/studies")
 async def create_study(
     title: str = Form(...), goal: str = Form(""), start_date: date | None = Form(None),
     weeks: int = Form(4), hours_per_week: float = Form(3),
-    member_count: int | None = Form(None), rules: str = Form("매주 정해진 범위를 공부하고 랩미팅에서 발표한다."),
+    member_count: int | None = Form(None), rules: str = Form(""),
     member_profiles: str = Form(""),
     pdf: UploadFile | None = File(None),
     user: dict = Depends(current_user),
 ):
     """주제만 있으면 만들 수 있다. 목표·기간·시작일·스터디원은 비워 두면 기본값을 쓴다."""
-    title, goal = title.strip(), goal.strip() or title.strip()
+    title = guard.clean_label(title, 120)
+    goal = guard.clean_label(goal, 300) or title
     start_date = start_date or date.today()
     if not title:
         raise HTTPException(400, "학습 주제를 입력해 주세요.")
+    if guard.is_trick(title) or guard.is_trick(goal):
+        raise HTTPException(400, "공부할 주제를 적어 주세요.")
     try:
         profiles = json.loads(member_profiles) if member_profiles else []
     except ValueError as exc:
@@ -123,33 +147,25 @@ async def create_study(
         for p in profiles
     )):
         raise HTTPException(400, "AI 스터디원 이름(12자 이하)과 학습 단계를 확인해 주세요.")
-    pages = []
-    if pdf is not None:
-        pages = await read_pdf(pdf)
+    pages, size = await read_file(pdf) if pdf is not None else ([], 0)
     page_count = len(pages)
+    plans = await first_plan(title, goal, weeks, pages)
     with connect() as db:
         cur = db.execute(
-            "INSERT INTO studies(title,goal,start_date,weeks,hours_per_week,member_count,rules,pdf_name,user_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO studies(title,goal,start_date,weeks,hours_per_week,member_count,rules,pdf_name,pdf_size,user_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
             (title, goal, start_date.isoformat(), weeks, hours_per_week, member_count,
-             rules.strip(), pdf.filename if pdf else "", user["id"]),
+             rules.strip(), guard.clean_filename(pdf.filename) if pdf else "", size, user["id"]),
         )
         study_id = cur.lastrowid
         db.executemany("INSERT INTO pages VALUES(?,?,?)", [(study_id, n, body) for n, body in pages])
         for number in range(1, weeks + 1):
             first = min(page_count, math.ceil((number - 1) * page_count / weeks) + 1) if page_count else 1
             last = max(first, math.ceil(number * page_count / weeks)) if page_count else 0
-            if pages:
-                week_title = f"{number}주차"
-                scope = f"{first}~{last}쪽" if first <= last else "이전 범위 복습"
-            elif weeks == 1:
-                week_title, scope = "학습 목표 정리", "핵심 개념과 예시를 찾아 내 말로 설명하기"
-            elif number == 1:
-                week_title, scope = "핵심 개념 찾기", "학습 목표와 관련된 핵심 용어와 정의 정리하기"
-            elif number == weeks:
-                week_title, scope = "설명과 복습", "배운 내용을 연결해 설명하고 남은 질문 정리하기"
-            else:
-                week_title, scope = "원리와 예시", "작동 원리를 이해하고 실제 예시에 적용하기"
+            plan = plans.get(number, {})
+            week_title = str(plan.get("title") or ("발표" if number == weeks > 1 else f"{number}주차"))[:120]
+            # 교안이 있으면 쪽 범위를 지켜 근거 쪽을 정확히 고른다.
+            scope = (f"{first}~{last}쪽" if pages and first <= last else str(plan.get("scope") or goal))[:300]
             meeting = start_date + timedelta(days=number * 7 - 1)
             db.execute("INSERT INTO weeks(study_id,week_no,title,scope,meeting_date) VALUES(?,?,?,?,?)",
                        (study_id, number, week_title, scope, meeting.isoformat()))
@@ -161,7 +177,7 @@ async def create_study(
                 avatar = ""
             db.execute("INSERT INTO members(study_id,member_no,name,perspective,level,understanding,avatar) "
                        "VALUES(?,?,?,?,?,?,?)",
-                       (study_id, number, profile.get("name", "").strip() or PEER_NAMES[role], PERSPECTIVES[role],
+                       (study_id, number, guard.clean_label(profile.get("name", ""), 12) or PEER_NAMES[role], PERSPECTIVES[role],
                         profile.get("level", LEVELS[role]),
                         (profile.get("understanding") or INITIAL_UNDERSTANDING[role]).strip(), avatar))
         return study_data(db, study_id)
@@ -174,7 +190,7 @@ class Preferences(BaseModel):
 @router.put("/studies/{study_id}/preferences")
 def edit_preferences(study_id: int, body: Preferences):
     """채팅으로 정한 진행 방식을 채팅방 정보에서 지우거나 정리한다."""
-    items = list(dict.fromkeys(x.strip()[:60] for x in body.items if x.strip()))
+    items = [x for x in dict.fromkeys(guard.clean_label(x, 60) for x in body.items) if x and not guard.is_trick(x)]
     with connect() as db:
         db.execute("UPDATE studies SET preferences=? WHERE id=?", (json.dumps(items, ensure_ascii=False), study_id))
         return study_data(db, study_id)
@@ -191,7 +207,7 @@ def edit_member(study_id: int, member_no: int, body: MemberEdit):
     """채팅방 정보에서 AI 스터디원의 이름·학습 단계·프로필 모양을 바꾼다."""
     with connect() as db:
         member = required(db, "SELECT * FROM members WHERE study_id=? AND member_no=?", (study_id, member_no))
-        name = member["name"] if body.name is None else body.name.strip()
+        name = member["name"] if body.name is None else guard.clean_label(body.name, 12)
         if not name:
             raise HTTPException(400, "이름을 입력해 주세요.")
         level = body.level or member["level"]
@@ -259,7 +275,7 @@ def delete_study(study_id: int):
     """스터디와 대화·기록을 모두 지운다."""
     with connect() as db:
         db.execute("DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE study_id=?)", (study_id,))
-        for table in ("sessions", "weeks", "members", "pages", "page_history", "review_items"):
+        for table in ("attachments", "sessions", "weeks", "members", "pages", "page_history", "review_items"):
             db.execute(f"DELETE FROM {table} WHERE study_id=?", (study_id,))
         db.execute("DELETE FROM studies WHERE id=?", (study_id,))
         return {"ok": True}
