@@ -1,18 +1,26 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../theme.dart';
+import '../widgets/chat.dart';
 import '../widgets/common.dart';
+import 'chat_room_page.dart';
 
 /// 복습·성장 기록: 숫자 요약, 다시 볼 내용 체크, 주차별 정리.
 class LearningJourneyPage extends StatefulWidget {
   final int studyId;
-  const LearningJourneyPage({super.key, required this.studyId});
+  /// 기록 탭에서 고른 주차가 있으면 그 주차로 바로 내려간다.
+  final int? weekNo;
+  /// 채팅방에서 열었으면 복습을 누를 때 그 방으로 돌아가 이어 간다.
+  final ValueChanged<int>? onReview;
+  const LearningJourneyPage({super.key, required this.studyId, this.weekNo, this.onReview});
   @override State<LearningJourneyPage> createState() => _LearningJourneyPageState();
 }
 class _LearningJourneyPageState extends State<LearningJourneyPage> {
   Map<String, dynamic>? report;
   List<dynamic> reviews = [];
-  bool busy = false, showDone = false;
+  bool showDone = false;
+  final target = GlobalKey();
+  bool jumped = false;
   /// 문답을 펼쳐 본 주차 번호들.
   final openQa = <int>{};
   @override void initState() { super.initState(); refresh(); }
@@ -23,15 +31,24 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
         Api.request('GET', '/studies/${widget.studyId}/reviews'),
       ]);
       if (mounted) setState(() { report = results[0] as Map<String, dynamic>; reviews = results[1] as List<dynamic>; });
+      if (mounted && widget.weekNo != null && !jumped) {
+        jumped = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final box = target.currentContext;
+          if (box != null) Scrollable.ensureVisible(box, duration: const Duration(milliseconds: 250));
+        });
+      }
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
-  Future<void> setResolved(dynamic item, bool resolved) async {
-    setState(() => busy = true);
-    try {
-      await Api.request('PUT', '/studies/${widget.studyId}/reviews/${item['id']}', {'resolved': resolved});
-      await refresh();
-    } catch (e) { if (mounted) errorMessage(context, e); }
-    finally { if (mounted) setState(() => busy = false); }
+  Future<void> openReview(dynamic item) async {
+    if (widget.onReview != null) {
+      Navigator.pop(context);
+      widget.onReview!(item['id'] as int);
+      return;
+    }
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatRoomPage(
+      studyId: widget.studyId, title: '${report!['title']}', reviewId: item['id'] as int)));
+    if (mounted) refresh();
   }
 
   BoxDecoration get cardDecoration => BoxDecoration(color: Colors.white,
@@ -43,20 +60,8 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
     Text(label, style: const TextStyle(fontSize: 12, color: mutedInk)),
   ]));
 
-  Widget reviewRow(dynamic item, bool done) => InkWell(
-    onTap: busy ? null : () => setResolved(item, !done),
-    child: Padding(padding: const EdgeInsets.fromLTRB(14, 12, 16, 12), child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(done ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
-          size: 22, color: done ? brand : const Color(0xFFC5C8CE)),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${item['question']}', style: TextStyle(height: 1.45, fontSize: 14.5,
-            color: done ? mutedInk : ink, decoration: done ? TextDecoration.lineThrough : null)),
-          const SizedBox(height: 3),
-          Text('${item['source_week']}주차', style: const TextStyle(fontSize: 12, color: mutedInk)),
-        ])),
-      ])));
+  Widget reviewRow(dynamic item, bool done) => Material(type: MaterialType.transparency, child: ReviewRow(
+    text: '${item['question']}', week: item['source_week'] as int, done: done, onTap: done ? null : () => openReview(item)));
 
   Widget note(String label, String value, Color color) => Container(
     width: double.infinity, padding: const EdgeInsets.all(12), margin: const EdgeInsets.only(top: 10),
@@ -79,7 +84,8 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
     final weekNo = week['week_no'] as int;
     final hints = week['hint_count'] ?? 0;
     final richRecord = learned.isNotEmpty || gaps.isNotEmpty || highlight.isNotEmpty;
-    return Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(16), decoration: cardDecoration,
+    return Container(key: weekNo == widget.weekNo ? target : null,
+      margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(16), decoration: cardDecoration,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -93,6 +99,8 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
         ]),
         if (summary.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10),
           child: Text(summary, style: const TextStyle(height: 1.55, color: ink))),
+        if (week['evaluation'] is Map) Padding(padding: const EdgeInsets.only(top: 14),
+          child: EvaluationBody(week['evaluation'] as Map)),
         if (keywords.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: KeywordChips(keywords)),
         if (highlight.isNotEmpty) Container(
           width: double.infinity, margin: const EdgeInsets.only(top: 12), padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -142,7 +150,7 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
     final done = reviews.where((r) => r['status'] == 'done').toList();
     final weeks = ((data?['weeks'] as List?) ?? []).where((w) => w['status'] == 'complete').toList();
     return Scaffold(appBar: AppBar(title: const Text('복습·성장 기록')),
-      body: data == null ? const Center(child: CircularProgressIndicator()) : PageContent(children: [
+      body: data == null ? const Center(child: CircularProgressIndicator()) : PageContent(buildAll: true, children: [
         Container(margin: const EdgeInsets.only(top: 4), padding: const EdgeInsets.symmetric(vertical: 18),
           decoration: cardDecoration, child: Row(children: [
             stat(data['completed_weeks'] as int, '완료한 주차'),
@@ -173,7 +181,7 @@ class _LearningJourneyPageState extends State<LearningJourneyPage> {
           ])),
         ],
         const SectionTitle('주차별 기록'),
-        if (weeks.isEmpty) empty('주차를 마치면 여기에 정리돼요')
+        if (weeks.isEmpty) empty('아직 마친 주차가 없어요')
         else ...weeks.map((w) => weekCard(w as Map)),
       ]));
   }

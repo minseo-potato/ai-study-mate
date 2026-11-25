@@ -1,121 +1,119 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../theme.dart';
+import '../widgets/avatar.dart';
 import '../widgets/common.dart';
+import 'chat_room_page.dart';
 import 'learning_journey_page.dart';
 
-/// 모든 스터디의 남은 복습과 주차별 정리를 한 화면에서 본다(요청 한 번).
+/// 스터디별로 다시 볼 내용과 주차별 정리를 모아 본다(요청 한 번).
 class RecordsPage extends StatefulWidget {
   const RecordsPage({super.key});
   @override State<RecordsPage> createState() => _RecordsPageState();
 }
 class _RecordsPageState extends State<RecordsPage> {
-  List<dynamic>? reviews;
-  List<dynamic> weeks = [];
-  int? filter; // 스터디 id로 거르기, null이면 전체
+  List<dynamic>? studies;
+  List<dynamic> reviews = [], weeks = [];
+  /// 펼쳐 둔 스터디. 처음에는 첫 스터디만 펼친다.
+  final open = <int>{};
   @override void initState() { super.initState(); refresh(); }
   Future<void> refresh() async {
     try {
       final data = await Api.request('GET', '/me/records');
-      if (mounted) setState(() { reviews = data['reviews'] as List; weeks = data['weeks'] as List; });
+      if (!mounted) return;
+      setState(() {
+        final first = studies == null;
+        reviews = data['reviews'] as List; weeks = data['weeks'] as List;
+        studies = (data['studies'] as List).where((s) =>
+          reviews.any((r) => r['study_id'] == s['id']) || weeks.any((w) => w['study_id'] == s['id'])).toList();
+        if (first && studies!.isNotEmpty) open.add(studies!.first['id'] as int);
+      });
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
-  Future<void> resolve(dynamic item) async {
-    setState(() => reviews!.remove(item));
-    try {
-      await Api.request('PUT', '/studies/${item['study_id']}/reviews/${item['id']}', {'resolved': true});
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('복습을 마쳤어요'),
-        action: SnackBarAction(label: '되돌리기', onPressed: () async {
-          await Api.request('PUT', '/studies/${item['study_id']}/reviews/${item['id']}', {'resolved': false});
-          refresh();
-        })));
-    } catch (e) { if (mounted) { errorMessage(context, e); refresh(); } }
+  Future<void> openReview(dynamic item) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatRoomPage(
+      studyId: item['study_id'] as int, title: '${item['study_title']}', reviewId: item['id'] as int)));
+    if (mounted) refresh();
+  }
+  Future<void> openWeek(dynamic w) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) =>
+      LearningJourneyPage(studyId: w['study_id'] as int, weekNo: w['week_no'] as int)));
+    if (mounted) refresh();
   }
 
   BoxDecoration get cardDecoration => BoxDecoration(color: Colors.white,
     borderRadius: BorderRadius.circular(18), border: Border.all(color: lineColor));
+  Widget label(String text) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+    child: Text(text, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: mutedInk)));
 
-  Widget studyTag(String title) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-    decoration: BoxDecoration(color: pageBg, borderRadius: BorderRadius.circular(6)),
-    child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontSize: 11.5, color: subInk, fontWeight: FontWeight.w600)));
+  Widget weekRow(dynamic w) {
+    final summary = '${w['summary']}'.trim();
+    return InkWell(onTap: () => openWeek(w), child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+      child: Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('${w['week_no']}주차', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 8),
+            Expanded(child: Text('${w['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
+            if (w['evaluated'] == true) const Text('발표 평가',
+              style: TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w600)),
+          ]),
+          if (summary.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(summary, maxLines: 2,
+            overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.5, fontSize: 13.5, color: subInk))),
+          if ((w['keywords'] as List? ?? []).isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8),
+            child: KeywordChips((w['keywords'] as List).take(4).toList())),
+        ])),
+        const Icon(Icons.chevron_right_rounded, color: mutedInk),
+      ])));
+  }
 
-  Widget empty(String text) => Container(padding: const EdgeInsets.symmetric(vertical: 24), decoration: cardDecoration,
-    alignment: Alignment.center, child: Text(text, style: const TextStyle(color: mutedInk)));
+  Widget studyCard(dynamic s) {
+    final id = s['id'] as int;
+    final ownReviews = reviews.where((r) => r['study_id'] == id).toList();
+    final ownWeeks = weeks.where((w) => w['study_id'] == id).toList();
+    final opened = open.contains(id);
+    return Container(margin: const EdgeInsets.only(bottom: 12), decoration: cardDecoration, clipBehavior: Clip.antiAlias,
+      child: Material(type: MaterialType.transparency, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        InkWell(onTap: () => setState(() => opened ? open.remove(id) : open.add(id)), child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 12, 14), child: Row(children: [
+            ProfileAvatar(roomAvatar(s as Map), size: 42, soft: true),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${s['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text('${s['completed']}/${s['weeks']}주 완료${ownReviews.isEmpty ? '' : ', 다시 볼 내용 ${ownReviews.length}개'}',
+                style: const TextStyle(fontSize: 12.5, color: mutedInk)),
+            ])),
+            Icon(opened ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: mutedInk),
+          ]))),
+        AnimatedSize(duration: const Duration(milliseconds: 200), curve: Curves.easeOut, alignment: Alignment.topCenter,
+          child: !opened ? const SizedBox(width: double.infinity) : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Divider(height: 1),
+            if (ownReviews.isNotEmpty) ...[
+              label('다시 볼 내용'),
+              for (final r in ownReviews) ReviewRow(text: '${r['question']}', week: r['source_week'] as int, onTap: () => openReview(r)),
+            ],
+            if (ownReviews.isNotEmpty && ownWeeks.isNotEmpty) const Divider(height: 1),
+            if (ownWeeks.isNotEmpty) ...[label('주차별 정리'), for (final w in ownWeeks) weekRow(w)],
+            const SizedBox(height: 6),
+          ])),
+      ])));
+  }
 
   @override Widget build(BuildContext context) {
-    final all = reviews;
-    final studies = <int, String>{
-      for (final r in [...?all, ...weeks]) r['study_id'] as int: '${r['study_title']}'};
-    final shownReviews = (all ?? []).where((r) => filter == null || r['study_id'] == filter).toList();
-    final shownWeeks = weeks.where((w) => filter == null || w['study_id'] == filter).toList();
+    final items = studies;
     return ColoredBox(color: pageBg, child: Center(child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: chatMaxWidth), child: Scaffold(
       appBar: AppBar(titleSpacing: 20, shape: const Border(),
         title: const Text('기록', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800))),
-      body: all == null ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(onRefresh: refresh,
+      body: items == null ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(onRefresh: refresh,
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 40), children: [
-          if (studies.length > 1) SizedBox(height: 40, child: ListView(scrollDirection: Axis.horizontal, children: [
-            for (final entry in [MapEntry<int?, String>(null, '전체'), ...studies.entries.map((e) => MapEntry<int?, String>(e.key, e.value))])
-              Padding(padding: const EdgeInsets.only(right: 8), child: ChoiceChip(
-                label: Text(entry.value), selected: filter == entry.key, showCheckmark: false,
-                labelStyle: TextStyle(fontFamily: 'NotoSansKR', fontSize: 13,
-                  fontWeight: filter == entry.key ? FontWeight.w700 : FontWeight.w500,
-                  color: filter == entry.key ? brand : subInk),
-                side: BorderSide(color: filter == entry.key ? brand : const Color(0xFFE1E3E8)),
-                onSelected: (_) => setState(() => filter = entry.key))),
-          ])),
-          SectionTitle('다시 볼 내용', detail: shownReviews.isEmpty ? null : '${shownReviews.length}개'),
-          if (shownReviews.isEmpty) empty('남은 복습이 없어요')
-          else Container(decoration: cardDecoration, clipBehavior: Clip.antiAlias, child: Column(children: [
-            for (var i = 0; i < shownReviews.length; i++) ...[
-              if (i > 0) const Divider(height: 1, indent: 50),
-              InkWell(onTap: () => resolve(shownReviews[i]), child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 16, 12),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Icon(Icons.radio_button_unchecked_rounded, size: 22, color: Color(0xFFC5C8CE)),
-                  const SizedBox(width: 12),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('${shownReviews[i]['question']}', style: const TextStyle(height: 1.45, fontSize: 14.5)),
-                    const SizedBox(height: 5),
-                    Row(children: [
-                      if (filter == null) ...[Flexible(child: studyTag('${shownReviews[i]['study_title']}')), const SizedBox(width: 6)],
-                      Text('${shownReviews[i]['source_week']}주차', style: const TextStyle(fontSize: 12, color: mutedInk)),
-                    ]),
-                  ])),
-                ]))),
-            ],
-          ])),
-          const SectionTitle('주차별 정리'),
-          if (shownWeeks.isEmpty) empty('주차를 마치면 여기에 모여요')
-          else ...shownWeeks.map((w) => Padding(padding: const EdgeInsets.only(bottom: 10), child: Material(
-            color: Colors.white, borderRadius: BorderRadius.circular(18), child: InkWell(
-              borderRadius: BorderRadius.circular(18),
-              onTap: () => Navigator.push(context, MaterialPageRoute(
-                builder: (_) => LearningJourneyPage(studyId: w['study_id'] as int))).then((_) => refresh()),
-              child: Container(padding: const EdgeInsets.all(16), decoration: cardDecoration,
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    Text('${w['week_no']}주차', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text('${w['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
-                    if (filter == null) ConstrainedBox(constraints: const BoxConstraints(maxWidth: 140),
-                      child: studyTag('${w['study_title']}')),
-                  ]),
-                  if ('${w['summary']}'.trim().isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8),
-                    child: Text('${w['summary']}', maxLines: 3, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(height: 1.5, color: subInk))),
-                  if ((w['keywords'] as List? ?? []).isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10),
-                    child: KeywordChips((w['keywords'] as List).take(4).toList())),
-                  if ((w['stats'] as Map? ?? {}).isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(
-                    '질문 ${w['stats']['questions'] ?? 0} · 답변 ${w['stats']['answers'] ?? 0}'
-                    '${(w['stats']['hints'] ?? 0) > 0 ? ' · 힌트 ${w['stats']['hints']}' : ''}'
-                    '${(w['stats']['reviews'] ?? 0) > 0 ? ' · 복습 ${w['stats']['reviews']}' : ''}',
-                    style: const TextStyle(fontSize: 12, color: mutedInk))),
-                ])))))),
+          if (items.isEmpty) const Padding(padding: EdgeInsets.only(top: 120),
+            child: Center(child: Text('아직 기록이 없어요', style: TextStyle(color: mutedInk)))),
+          for (final s in items) studyCard(s),
         ])),
     ))));
   }

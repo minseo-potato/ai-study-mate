@@ -16,7 +16,7 @@ def list_minutes(study_id: int):
     with connect() as db:
         required(db, "SELECT 1 FROM studies WHERE id=?", (study_id,))
         return [{"week_no": r["week_no"], "session_id": r["id"], "minutes": json.loads(r["minutes"])}
-                for r in db.execute("SELECT * FROM sessions WHERE study_id=? AND status='finished' ORDER BY week_no,id", (study_id,))]
+                for r in db.execute("SELECT * FROM sessions WHERE study_id=? AND status='finished' AND kind!='review' ORDER BY week_no,id", (study_id,))]
 
 
 @router.get("/studies/{study_id}/reviews")
@@ -28,6 +28,24 @@ def list_reviews(study_id: int):
             (study_id,))]
 
 
+def resolve_review(db, study_id: int, review_id: int, resolved: bool):
+    """복습을 끝내거나 다시 연다. 남은 주차의 복습 목록도 함께 맞춘다."""
+    item = required(db, "SELECT * FROM review_items WHERE id=? AND study_id=?", (review_id, study_id))
+    if resolved:
+        db.execute("UPDATE review_items SET status='done',resolved_at=? WHERE id=?",
+                   (datetime.now(timezone.utc).isoformat(), review_id))
+    else:
+        db.execute("UPDATE review_items SET status='open',resolved_at=NULL WHERE id=?", (review_id,))
+    weeks = list(db.execute("SELECT week_no,review FROM weeks WHERE study_id=? AND status!='complete' ORDER BY week_no",
+                            (study_id,)))
+    for index, week in enumerate(weeks):
+        reviews = [q for q in loads(week["review"]) if q != item["question"]]
+        if not resolved and index == 0:
+            reviews.append(item["question"])
+        db.execute("UPDATE weeks SET review=? WHERE study_id=? AND week_no=?",
+                   (dumps(reviews), study_id, week["week_no"]))
+
+
 class ReviewEdit(BaseModel):
     resolved: bool
 
@@ -35,20 +53,7 @@ class ReviewEdit(BaseModel):
 @router.put("/studies/{study_id}/reviews/{review_id}")
 def edit_review(study_id: int, review_id: int, body: ReviewEdit):
     with connect() as db:
-        item = required(db, "SELECT * FROM review_items WHERE id=? AND study_id=?", (review_id, study_id))
-        if body.resolved:
-            db.execute("UPDATE review_items SET status='done',resolved_at=? WHERE id=?",
-                       (datetime.now(timezone.utc).isoformat(), review_id))
-        else:
-            db.execute("UPDATE review_items SET status='open',resolved_at=NULL WHERE id=?", (review_id,))
-        weeks = list(db.execute("SELECT week_no,review FROM weeks WHERE study_id=? AND status!='complete' ORDER BY week_no",
-                                (study_id,)))
-        for index, week in enumerate(weeks):
-            reviews = [q for q in loads(week["review"]) if q != item["question"]]
-            if not body.resolved and index == 0:
-                reviews.append(item["question"])
-            db.execute("UPDATE weeks SET review=? WHERE study_id=? AND week_no=?",
-                       (dumps(reviews), study_id, week["week_no"]))
+        resolve_review(db, study_id, review_id, body.resolved)
         return dict(required(db, "SELECT * FROM review_items WHERE id=?", (review_id,)))
 
 
@@ -57,7 +62,7 @@ def learning_report(study_id: int):
     with connect() as db:
         study = study_data(db, study_id)
         sessions = [dict(row) for row in db.execute(
-            "SELECT * FROM sessions WHERE study_id=? AND status='finished' ORDER BY week_no,id", (study_id,))]
+            "SELECT * FROM sessions WHERE study_id=? AND status='finished' AND kind!='review' ORDER BY week_no,id", (study_id,))]
         all_reviews = [dict(row) for row in db.execute(
             "SELECT source_week,status FROM review_items WHERE study_id=?", (study_id,))]
         report_weeks = []
@@ -87,7 +92,7 @@ def learning_report(study_id: int):
                 "summary": minutes.get("summary", ""),
                 "keywords": minutes.get("keywords", []), "learned": minutes.get("learned", []),
                 "gaps": minutes.get("gaps", []), "highlight": minutes.get("highlight", ""),
-                "qa": minutes.get("qa", []), "next_checks": minutes.get("next_checks", []),
+                "evaluation": minutes.get("evaluation"), "qa": minutes.get("qa", []), "next_checks": minutes.get("next_checks", []),
                 "hint_count": (minutes.get("stats") or {}).get("hints", 0),
                 "question_count": question_count, "answer_count": answer_count,
                 "source_pages": minutes.get("source_pages", []),

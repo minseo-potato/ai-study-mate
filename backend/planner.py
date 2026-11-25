@@ -7,6 +7,7 @@ import json
 import re
 from datetime import date, timedelta
 
+import guard
 from ai import demo_mode, generate_json
 
 KEYWORDS = ("미루", "연기", "늦추", "당기", "앞당", "바꾸", "바꿔", "변경", "일정", "계획",
@@ -29,6 +30,7 @@ STYLES = [
     (r"존댓말", "존댓말로 말하기", "편한 반말로 말하기"),
     (r"(정답|답).{0,6}(먼저|알려|가르쳐)", "모르는 부분은 답을 먼저 알려 주고 확인하기", None),
     (r"(퀴즈|문제).{0,6}(내|형식|처럼)", "짧은 퀴즈 형식으로 묻기", None),
+    (r"(질문|물어보|묻)\S{0,4}\s*(그만|하지\s*말|하지\s*마|지\s*말|지\s*마|말고|없이)", "질문하지 말고 설명과 생각을 나누기", None),
     (r"(칭찬|격려).{0,6}(많이|해)", "잘한 점을 자주 짚어 주기", None),
     (r"(교안|PDF|pdf).{0,8}(위주|중심|기준)", "교안 내용을 기준으로 이야기하기", None),
 ]
@@ -160,6 +162,10 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
     weeks = study["weeks"]
     total = len(weeks)
     intent = cmd["intent"]
+    polite = "존댓말로 말하기" in load_preferences(study.get("preferences"))
+
+    def say(casual: str, formal: str) -> str:
+        return formal if polite else casual
     target = int(cmd.get("week_no") or current_week)
     target = max(1, min(total, target))
 
@@ -174,47 +180,48 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
         else:
             delta = int(cmd.get("days") or 7)
         if delta == 0:
-            return f"{target}주차 모임은 이미 {_fmt(week['meeting_date'])}이에요."
+            return say(f"{target}주차 모임 이미 {_fmt(week['meeting_date'])}이야.", f"{target}주차 모임은 이미 {_fmt(week['meeting_date'])}이에요.")
         moved = [w for w in weeks if w["week_no"] >= target and w["status"] != "complete"]
         for w in moved:
             d = date.fromisoformat(w["meeting_date"]) + timedelta(days=delta)
             db.execute("UPDATE weeks SET meeting_date=? WHERE study_id=? AND week_no=?", (d.isoformat(), sid, w["week_no"]))
         new_date = (old + timedelta(days=delta)).isoformat()
-        verb = "미뤘어요" if delta > 0 else "앞당겼어요"
-        tail = f" 뒤 일정도 {abs(delta)}일씩 같이 옮겼어요." if len(moved) > 1 else ""
-        return f"좋아요! {target}주차 모임을 {_fmt(new_date)}로 {verb}.{tail}"
+        verb = "미뤘어" if delta > 0 else "앞당겼어"
+        tail = f" 뒤 일정도 {abs(delta)}일씩 같이 옮겼어" if len(moved) > 1 else ""
+        return say(f"오케이, {target}주차 모임 {_fmt(new_date)}로 {verb}." + (tail + "." if tail else ""),
+                   f"좋아요! {target}주차 모임을 {_fmt(new_date)}로 {verb}요." + (tail + "요." if tail else ""))
 
     if intent == "change_week":
         title = str(cmd.get("title") or "").strip()[:120]
         scope = str(cmd.get("scope") or title).strip()[:500]
         if not title:
-            return "어떤 내용으로 바꿀지 한 번만 더 알려 주세요."
+            return say("어떤 내용으로 바꿀지 한 번만 더 말해 줘.", "어떤 내용으로 바꿀지 한 번만 더 알려 주세요.")
         db.execute("UPDATE weeks SET title=?,scope=? WHERE study_id=? AND week_no=?", (title, scope, sid, target))
-        return f"알겠어요. {target}주차는 '{title}'(으)로 바꿔 둘게요."
+        return say(f"알겠어, {target}주차는 '{title}'(으)로 바꿔 둘게.", f"알겠어요. {target}주차는 '{title}'(으)로 바꿔 둘게요.")
 
     if intent == "hours":
         hours = float(cmd.get("hours") or 0)
         if not 0.5 <= hours <= 80:
-            return "주당 시간은 0.5~80시간 사이로 정해 주세요."
+            return say("주당 시간은 0.5~80시간 사이로 정해 줘.", "주당 시간은 0.5~80시간 사이로 정해 주세요.")
         db.execute("UPDATE studies SET hours_per_week=? WHERE id=?", (hours, sid))
-        return f"좋아요, 앞으로 주당 {hours:g}시간 기준으로 진행할게요."
+        return say(f"좋아, 이제 주당 {hours:g}시간 기준으로 하자.", f"좋아요, 앞으로 주당 {hours:g}시간 기준으로 진행할게요.")
 
     if intent == "add_weeks":
         add = int(cmd.get("add_weeks") or 1)
         if not 1 <= add or total + add > 26:
-            return "스터디 기간은 최대 26주까지만 늘릴 수 있어요."
+            return say("스터디는 26주까지만 늘릴 수 있어.", "스터디 기간은 최대 26주까지만 늘릴 수 있어요.")
         last = date.fromisoformat(weeks[-1]["meeting_date"])
         for i in range(1, add + 1):
             db.execute("INSERT INTO weeks(study_id,week_no,title,scope,meeting_date) VALUES(?,?,?,?,?)",
-                       (sid, total + i, "복습과 심화", "앞에서 배운 내용 복습과 심화",
+                       (sid, total + i, f"{total + i}주차", study["goal"],
                         (last + timedelta(days=7 * i)).isoformat()))
         db.execute("UPDATE studies SET weeks=? WHERE id=?", (total + add, sid))
-        return f"스터디를 {add}주 늘렸어요. 이제 총 {total + add}주예요."
+        return say(f"{add}주 늘렸어. 이제 총 {total + add}주야.", f"스터디를 {add}주 늘렸어요. 이제 총 {total + add}주예요.")
 
     if intent == "replan":
         remaining = [w for w in weeks if w["status"] != "complete"]
         if not remaining:
-            return "남은 주차가 없어서 바꿀 계획이 없어요."
+            return say("남은 주차가 없어서 바꿀 게 없어.", "남은 주차가 없어서 바꿀 계획이 없어요.")
         result = await generate_json(
             "완료하지 못한 범위와 복습 항목을 남은 주차에 재배분한 한국어 계획을 제안하세요. "
             "JSON 키는 weeks이며, 각 항목에 week_no,title,scope를 넣으세요. 날짜는 수정하지 마세요.",
@@ -229,27 +236,29 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
                            (str(w["title"])[:120], str(w["scope"])[:500], sid, w["week_no"]))
                 changed += 1
         lines = "\n".join(f"· {w['week_no']}주차 {w['title']}" for w in drafts if w.get("week_no") in valid)
-        return f"남은 {changed}개 주차 계획을 다시 짰어요.\n{lines}" if changed else "지금 계획을 그대로 두는 게 좋겠어요."
+        return say(f"남은 {changed}개 주차 다시 짜 봤어.\n{lines}", f"남은 {changed}개 주차 계획을 다시 짰어요.\n{lines}") if changed \
+            else say("지금 계획 그대로 가는 게 나을 듯.", "지금 계획을 그대로 두는 게 좋겠어요.")
 
     if intent == "previous_questions":
         on = bool(cmd.get("on"))
         db.execute("UPDATE weeks SET include_previous_questions=? WHERE study_id=? AND week_no>=? AND status!='complete'",
                    (int(on), sid, current_week))
-        return ("좋아요, 지난 주차 내용도 섞어서 같이 확인할게요." if on
-                else "알겠어요. 이제 이번 주 내용만 물어볼게요.")
+        return (say("좋아, 지난 주차 것도 섞어서 얘기하자.", "좋아요, 지난 주차 내용도 섞어서 같이 확인할게요.") if on
+                else say("알겠어, 이번 주 것만 얘기하자.", "알겠어요. 이제 이번 주 내용만 이야기할게요."))
 
     members = study["members"]
     if intent == "member_level":
         member = next((m for m in members if m["member_no"] == cmd.get("member_no")), None)
         if not member:
-            return "누구의 난이도를 바꿀지 이름으로 한 번만 더 알려 주세요."
+            return say("누구 난이도를 바꿀지 이름으로 말해 줘.", "누구의 난이도를 바꿀지 이름으로 한 번만 더 알려 주세요.")
         level = cmd.get("level") if cmd.get("level") in LEVELS else _shift(member["level"], int(cmd.get("direction") or 0))
         db.execute("UPDATE members SET level=? WHERE study_id=? AND member_no=?", (level, sid, member["member_no"]))
         cmd["speaker_no"] = member["member_no"]  # 바뀐 당사자가 직접 대답한다
         if level == member["level"]:
-            return f"지금도 {level} 단계로 이야기하고 있어요. 더 바꾸고 싶으면 말해 주세요!"
+            return say(f"나 지금도 {level} 단계야. 더 바꾸고 싶으면 말해 줘.", f"지금도 {level} 단계로 이야기하고 있어요.")
         easier = LEVELS.index(level) < LEVELS.index(member["level"]) if member["level"] in LEVELS else False
-        return f"알겠어요! 이제 {level} 단계에 맞춰서 " + ("더 쉽게 풀어서 물어볼게요." if easier else "조금 더 깊게 물어볼게요.")
+        return say(f"알겠어, 이제 {level} 단계로 " + ("더 쉽게 풀어서 말할게." if easier else "좀 더 깊게 얘기할게."),
+                   f"알겠어요! 이제 {level} 단계에 맞춰서 " + ("더 쉽게 풀어서 말할게요." if easier else "조금 더 깊게 이야기할게요."))
 
     if intent == "all_levels":
         changed = []
@@ -259,28 +268,32 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
                 db.execute("UPDATE members SET level=? WHERE study_id=? AND member_no=?", (level, sid, member["member_no"]))
                 changed.append(f"{member['name']} {level}")
         if not changed:
-            return "지금 난이도가 이미 그 단계예요. 다른 방식으로 바꿔 볼까요?"
+            return say("이미 그 단계야.", "지금 난이도가 이미 그 단계예요.")
         easier = int(cmd.get("direction") or 0) < 0 or cmd.get("level") == "기초"
-        return ("그럼 다 같이 한 단계 쉽게 가 볼게요. " if easier else "좋아요, 다 같이 한 단계 깊게 가 볼게요. ") + \
+        return (say("그럼 다 같이 좀 쉽게 가자. ", "그럼 다 같이 한 단계 쉽게 가 볼게요. ") if easier
+                else say("좋아, 다 같이 좀 깊게 가자. ", "좋아요, 다 같이 한 단계 깊게 가 볼게요. ")) + \
             f"({', '.join(changed)})"
 
     if intent in ("style", "style_reset"):
         prefs = load_preferences(study.get("preferences"))
         if intent == "style_reset":
             db.execute("UPDATE studies SET preferences='[]' WHERE id=?", (sid,))
-            return "알겠어요. 요청했던 진행 방식을 모두 지우고 처음처럼 할게요." if prefs else "지금은 따로 정한 진행 방식이 없어요."
-        label = str(cmd.get("preference") or "").strip()[:60]
+            return say("알겠어, 처음처럼 할게.", "알겠어요. 처음처럼 할게요.") if prefs else say("따로 정해 둔 방식은 없어.", "지금은 따로 정한 진행 방식이 없어요.")
+        label = guard.clean_label(cmd.get("preference"), 60)
+        if guard.is_trick(label):
+            label = ""
         if not label:
-            return "어떤 방식으로 진행하면 좋을지 한 번만 더 알려 주세요."
+            return say("어떤 식으로 할지 한 번만 더 말해 줘.", "어떤 방식으로 진행하면 좋을지 한 번만 더 알려 주세요.")
         opposite = next((o for _, l, o in STYLES if l == label), None)
         prefs = [x for x in prefs if x not in (label, opposite)] + [label]
         db.execute("UPDATE studies SET preferences=? WHERE id=?", (json.dumps(prefs[-6:], ensure_ascii=False), sid))
-        return f"좋아요! 앞으로는 '{label}'로 할게요. 다른 친구들도 같이 맞출게요."
+        polite = label == "존댓말로 말하기" or (polite and label != "편한 반말로 말하기")
+        return say(f"오케이, 이제 '{label}'로 할게.", f"좋아요! 앞으로는 '{label}'로 할게요.")
 
     if intent == "rename_room":
-        title = str(cmd.get("title") or "").strip()[:120]
-        if not title:
-            return "어떤 이름으로 바꿀지 알려 주세요."
+        title = guard.clean_label(cmd.get("title"), 120)
+        if not title or guard.is_trick(title):
+            return say("어떤 이름으로 바꿀지 말해 줘.", "어떤 이름으로 바꿀지 알려 주세요.")
         db.execute("UPDATE studies SET title=? WHERE id=?", (title, sid))
-        return f"채팅방 이름을 '{title}'(으)로 바꿨어요."
+        return say(f"방 이름 '{title}'(으)로 바꿨어.", f"채팅방 이름을 '{title}'(으)로 바꿨어요.")
     return ""

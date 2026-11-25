@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'widgets/files.dart';
 
 const apiBase = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
 
@@ -43,17 +43,20 @@ class Api {
     return _send(request);
   }
 
-  static Future<dynamic> create(Map<String, String> fields, PlatformFile? pdf) {
+  static Future<dynamic> create(Map<String, String> fields, PickedFile? pdf) {
     final request = http.MultipartRequest('POST', url('/studies'))..fields.addAll(fields);
-    if (pdf != null) request.files.add(_pdfPart(pdf));
+    if (pdf != null) request.files.add(_filePart('pdf', pdf));
     return _send(request);
   }
 
-  static Future<dynamic> uploadPdf(int studyId, PlatformFile pdf) =>
-    _send(http.MultipartRequest('PUT', url('/studies/$studyId/pdf'))..files.add(_pdfPart(pdf)));
+  static Future<dynamic> uploadPdf(int studyId, PickedFile file) =>
+    _send(http.MultipartRequest('PUT', url('/studies/$studyId/pdf'))..files.add(_filePart('pdf', file)));
 
-  static http.MultipartFile _pdfPart(PlatformFile pdf) =>
-    http.MultipartFile.fromBytes('pdf', pdf.bytes!, filename: pdf.name);
+  static Future<dynamic> attachFile(int sessionId, PickedFile file) =>
+    _send(http.MultipartRequest('POST', url('/sessions/$sessionId/files'))..files.add(_filePart('file', file)));
+
+  static http.MultipartFile _filePart(String field, PickedFile file) =>
+    http.MultipartFile.fromBytes(field, file.bytes, filename: file.name);
 
   static Future<dynamic> _send(http.BaseRequest request) async {
     if (token != null) request.headers['Authorization'] = 'Bearer $token';

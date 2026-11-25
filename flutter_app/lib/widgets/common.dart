@@ -4,10 +4,13 @@ import '../theme.dart';
 
 class PageContent extends StatelessWidget {
   final List<Widget> children;
-  const PageContent({super.key, required this.children});
+  final bool buildAll;
+  const PageContent({super.key, required this.children, this.buildAll = false});
   @override Widget build(BuildContext context) => Center(child: ConstrainedBox(
     constraints: const BoxConstraints(maxWidth: 640),
-    child: ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 100), children: children)));
+    child: buildAll ? SingleChildScrollView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children))
+      : ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 100), children: children)));
 }
 
 class SectionTitle extends StatelessWidget {
@@ -25,7 +28,15 @@ void errorMessage(BuildContext context, Object e) {
   final message = e is http.ClientException
     ? '서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해 주세요.'
     : e.toString().replaceFirst(RegExp(r'^Exception: '), '');
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  showNotice(context, message);
+}
+
+/// 하단 알림. 앞 알림을 바로 치우고 짧게 보여 준다(되돌리기 같은 버튼이 있으면 조금 더).
+void showNotice(BuildContext context, String message, {SnackBarAction? action}) {
+  ScaffoldMessenger.of(context)
+    ..removeCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(message), action: action, persist: false,
+      duration: Duration(milliseconds: action == null ? 1800 : 3000)));
 }
 
 /// 휴대폰에서는 아래에서 올라오는 시트, 넓은 화면에서는 가운데 대화상자로 연다.
@@ -72,6 +83,26 @@ class LevelPicker extends StatelessWidget {
           fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: selected ? ink : mutedInk))));
     return compact ? child : Expanded(child: child);
   }
+}
+
+/// 다시 볼 내용 한 줄. 누르면 채팅에서 이어서 답한다.
+class ReviewRow extends StatelessWidget {
+  final String text;
+  final int week;
+  final VoidCallback? onTap;
+  final bool done;
+  const ReviewRow({super.key, required this.text, required this.week, this.onTap, this.done = false});
+  @override Widget build(BuildContext context) => InkWell(onTap: onTap, child: Padding(
+    padding: const EdgeInsets.fromLTRB(16, 10, 12, 10), child: Row(children: [
+      Icon(done ? Icons.check_circle_rounded : Icons.chat_bubble_outline_rounded, size: 20, color: done ? brand : mutedInk),
+      const SizedBox(width: 12),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(text, style: TextStyle(height: 1.45, fontSize: 14.5, color: done ? mutedInk : ink)),
+        const SizedBox(height: 3),
+        Text('$week주차', style: const TextStyle(fontSize: 12, color: mutedInk)),
+      ])),
+      if (!done) const Icon(Icons.chevron_right_rounded, color: mutedInk),
+    ])));
 }
 
 /// 기록에 쓰는 핵심 개념 칩 줄.

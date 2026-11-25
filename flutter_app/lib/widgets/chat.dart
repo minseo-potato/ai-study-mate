@@ -29,8 +29,12 @@ class ChatBubble extends StatelessWidget {
   final Map? member;
   /// 같은 사람이 이어서 말하면 이름과 프로필을 한 번만 보여준다.
   final bool grouped;
+  /// 말풍선 아래 작은 표시(복습 완료 등).
+  final String? note;
+  /// 말풍선 위 작은 표시(다시 볼 내용 등).
+  final String? lead;
   const ChatBubble({super.key, required this.name, required this.text, required this.mine,
-    this.caption, this.onCaptionTap, this.member, this.grouped = false});
+    this.caption, this.onCaptionTap, this.member, this.grouped = false, this.note, this.lead});
   @override Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final radius = BorderRadius.only(
@@ -54,7 +58,13 @@ class ChatBubble extends StatelessWidget {
               children: [
                 if (!mine && !grouped) Padding(padding: const EdgeInsets.fromLTRB(2, 0, 2, 4),
                   child: Text(name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF3A3D44)))),
+                if (lead != null) Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(lead!,
+                  style: const TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w700))),
                 bubble,
+                if (note != null) Padding(padding: const EdgeInsets.only(top: 4, left: 2), child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.check_circle_rounded, size: 14, color: Color(0xFF12B886)), const SizedBox(width: 4),
+                  Text(note!, style: const TextStyle(fontSize: 12, color: subInk, fontWeight: FontWeight.w600)),
+                ])),
                 if (caption != null) Padding(padding: const EdgeInsets.only(top: 4), child: InkWell(
                   onTap: onCaptionTap, borderRadius: BorderRadius.circular(12),
                   child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -102,21 +112,30 @@ class WeekDivider extends StatelessWidget {
 /// 주차를 마쳤을 때 채팅 안에 남는 정리 카드.
 class StudySummaryCard extends StatelessWidget {
   final Map<String, dynamic> session;
-  const StudySummaryCard({super.key, required this.session});
+  /// 방금 마쳤으면 부드럽게 나타난다.
+  final bool fresh;
+  const StudySummaryCard({super.key, required this.session, this.fresh = false});
   @override Widget build(BuildContext context) {
     final raw = session['minutes'] as String? ?? '';
     final minutes = raw.isEmpty ? <String, dynamic>{} : jsonDecode(raw) as Map<String, dynamic>;
     final checks = (minutes['next_checks'] as List?) ?? [];
     final keywords = (minutes['keywords'] as List?) ?? [];
     final learned = ((minutes['learned'] as List?) ?? []).take(2).toList();
-    return Center(child: Container(margin: const EdgeInsets.only(top: 16), constraints: const BoxConstraints(maxWidth: 520),
+    if ('${minutes['summary'] ?? ''}'.isEmpty) return const SizedBox.shrink();
+    final card = Center(child: Container(margin: const EdgeInsets.only(top: 16), constraints: const BoxConstraints(maxWidth: 520),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18),
         boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2))]),
       clipBehavior: Clip.antiAlias,
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Container(color: brandSoft, padding: const EdgeInsets.fromLTRB(16, 12, 16, 12), child: Row(children: [
-          const Icon(Icons.auto_awesome_rounded, size: 18, color: brand), const SizedBox(width: 8),
-          Text('${session['week_no']}주차 스터디 정리', style: const TextStyle(fontWeight: FontWeight.w700, color: ink)),
+        Container(color: brandSoft, padding: const EdgeInsets.fromLTRB(16, 14, 16, 14), child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.check_circle_rounded, size: 18, color: brand), const SizedBox(width: 8),
+            Expanded(child: Text('${session['week_no']}주차 정리', style: const TextStyle(fontWeight: FontWeight.w700, color: ink))),
+            Text('${session['week_no']}/${session['total_weeks']}주', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 10),
+          WeekDots(total: session['total_weeks'] as int, done: session['week_no'] as int),
         ])),
         Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${minutes['summary'] ?? ''}', style: const TextStyle(height: 1.55, color: ink)),
@@ -126,7 +145,11 @@ class StudySummaryCard extends StatelessWidget {
           if (checks.isNotEmpty) ...[const SizedBox(height: 14), NoteList(title: '다음에 다시 볼 것', items: checks,
             icon: Icons.bookmark_rounded, color: brand)],
         ])),
+        if (session['next_week'] is Map) Container(
+          decoration: const BoxDecoration(border: Border(top: BorderSide(color: lineColor))),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12), child: NextWeekLine(session['next_week'] as Map)),
       ])));
+    return fresh ? RiseIn(child: card) : card;
   }
 }
 
@@ -172,4 +195,182 @@ class InfoSection extends StatelessWidget {
       const SizedBox(height: 10),
       ...children,
     ]));
+}
+
+/// 새로 올라온 카드를 한 번 부드럽게 펼친다.
+class RiseIn extends StatelessWidget {
+  final Widget child;
+  const RiseIn({super.key, required this.child});
+  @override Widget build(BuildContext context) => MediaQuery.disableAnimationsOf(context) ? child
+    : TweenAnimationBuilder<double>(tween: Tween(begin: 0, end: 1), duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic, child: child,
+        builder: (context, t, child) => ClipRect(child: Align(alignment: Alignment.topCenter, heightFactor: t,
+          child: Opacity(opacity: t, child: child))));
+}
+
+/// 주차 정리나 발표 평가를 만드는 동안 채팅에 보이는 자리.
+class WorkingNote extends StatelessWidget {
+  final String text;
+  const WorkingNote(this.text, {super.key});
+  @override Widget build(BuildContext context) => RiseIn(child: Center(child: Container(
+    margin: const EdgeInsets.only(top: 18), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      const TypingDots(), const SizedBox(width: 10),
+      Text(text, style: const TextStyle(fontSize: 13, color: subInk, fontWeight: FontWeight.w600)),
+    ]))));
+}
+
+/// 발표 평가 내용: 항목별 점수, 잘한 점, 고칠 점.
+class EvaluationBody extends StatelessWidget {
+  final Map data;
+  final String? summary;
+  const EvaluationBody(this.data, {super.key, this.summary});
+  @override Widget build(BuildContext context) {
+    final scores = (data['scores'] as List?) ?? [];
+    final strengths = (data['strengths'] as List?) ?? [];
+    final improvements = (data['improvements'] as List?) ?? [];
+    final text = summary ?? '${data['summary'] ?? ''}';
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (text.isNotEmpty) Text(text, style: const TextStyle(height: 1.55, color: ink)),
+      for (final s in scores) Padding(padding: const EdgeInsets.only(top: 14), child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text('${s['label']}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700))),
+            Text('${s['score']}/5', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: brand)),
+          ]),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(value: (s['score'] as num) / 5, minHeight: 6,
+            borderRadius: BorderRadius.circular(6), backgroundColor: brandSoft),
+          if ('${s['reason'] ?? ''}'.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 5), child: Text('${s['reason']}',
+            style: const TextStyle(fontSize: 13, height: 1.45, color: subInk))),
+        ])),
+      if (strengths.isNotEmpty) ...[const SizedBox(height: 16), NoteList(title: '잘한 점', items: strengths,
+        icon: Icons.check_circle_rounded, color: const Color(0xFF12B886))],
+      if (improvements.isNotEmpty) ...[const SizedBox(height: 14), NoteList(title: '고치면 좋을 점', items: improvements,
+        icon: Icons.flag_rounded, color: const Color(0xFFF59F00))],
+    ]);
+  }
+}
+
+class EvaluationCard extends StatelessWidget {
+  final String summary;
+  final Map data;
+  const EvaluationCard({super.key, required this.summary, required this.data});
+  @override Widget build(BuildContext context) => Center(child: Container(
+    margin: const EdgeInsets.only(top: 16), constraints: const BoxConstraints(maxWidth: 520),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18),
+      boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2))]),
+    clipBehavior: Clip.antiAlias,
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Container(color: brandSoft, padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: const Text('발표 평가', style: TextStyle(fontWeight: FontWeight.w700, color: ink))),
+      Padding(padding: const EdgeInsets.all(16), child: EvaluationBody(data, summary: summary)),
+    ])));
+}
+
+/// 끝낸 주와 남은 주를 보여 주는 칸.
+class WeekDots extends StatelessWidget {
+  final int total, done;
+  const WeekDots({super.key, required this.total, required this.done});
+  @override Widget build(BuildContext context) => Semantics(label: '전체 $total주 가운데 $done주 완료', child: Row(children: [
+    for (var i = 0; i < total; i++) Expanded(child: Container(height: 6, margin: EdgeInsets.only(left: i == 0 ? 0 : 4),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(3),
+        color: i < done ? brand : brand.withValues(alpha: 0.18)))),
+  ]));
+}
+
+class NextWeekLine extends StatelessWidget {
+  final Map week;
+  const NextWeekLine(this.week, {super.key});
+  @override Widget build(BuildContext context) => Row(children: [
+    const Icon(Icons.arrow_forward_rounded, size: 16, color: brand), const SizedBox(width: 8),
+    Expanded(child: Text('${week['week_no']}주차  ${week['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: ink))),
+    const SizedBox(width: 8),
+    Text(friendlyDate('${week['meeting_date']}'), style: const TextStyle(fontSize: 12.5, color: mutedInk)),
+  ]);
+}
+
+/// 채팅 입력창 위 오른쪽의 마치기 버튼. 다른 칩과 섞이지 않게 따로 둔다.
+class FinishButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  const FinishButton({super.key, required this.label, required this.icon, this.onPressed});
+  @override Widget build(BuildContext context) => TextButton.icon(onPressed: onPressed,
+    style: TextButton.styleFrom(backgroundColor: onPressed == null ? pageBg : brandSoft, foregroundColor: brand,
+      disabledForegroundColor: mutedInk, minimumSize: const Size(0, 38), padding: const EdgeInsets.symmetric(horizontal: 14),
+      textStyle: const TextStyle(fontFamily: 'NotoSansKR', fontSize: 13, fontWeight: FontWeight.w700),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(19))),
+    icon: Icon(icon, size: 17), label: Text(label));
+}
+
+/// 주차를 마치기 전에 이번 주를 돌아보고 다음 주를 확인하는 창.
+class FinishSheet extends StatelessWidget {
+  final Map<String, dynamic> session;
+  final int said, files, reviews;
+  const FinishSheet({super.key, required this.session, required this.said, required this.files, required this.reviews});
+  Widget stat(String label, int value) => Expanded(child: Column(children: [
+    Text('$value', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: ink)),
+    const SizedBox(height: 2),
+    Text(label, style: const TextStyle(fontSize: 12, color: mutedInk)),
+  ]));
+  @override Widget build(BuildContext context) {
+    final next = session['next_week'] as Map?;
+    final weekNo = session['week_no'] as int;
+    return SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Text(next == null ? '스터디를 마칠까요?' : '$weekNo주차를 마칠까요?',
+        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: ink)),
+      const SizedBox(height: 4),
+      Text('${(session['week'] as Map)['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 14, color: subInk)),
+      const SizedBox(height: 18),
+      TweenAnimationBuilder<double>(tween: Tween(begin: MediaQuery.disableAnimationsOf(context) ? 1 : 0, end: 1),
+        duration: const Duration(milliseconds: 500), curve: Curves.easeOut,
+        builder: (context, t, _) => WeekDots(total: session['total_weeks'] as int, done: t > 0.5 ? weekNo : weekNo - 1)),
+      const SizedBox(height: 18),
+      Container(padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(color: pageBg, borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [stat('내가 한 말', said < 0 ? 0 : said), stat('올린 파일', files), stat('복습 표시', reviews)])),
+      if (next != null) Padding(padding: const EdgeInsets.fromLTRB(4, 16, 4, 0), child: NextWeekLine(next)),
+      const SizedBox(height: 22),
+      FilledButton(onPressed: () => Navigator.pop(context, true),
+        child: Text(next == null ? '스터디 마치기' : '정리하고 ${next['week_no']}주차로')),
+      const SizedBox(height: 6),
+      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('더 이야기하기')),
+    ]));
+  }
+}
+
+/// 주차 정리가 만들어지는 동안, 곧 올라올 카드 모양으로 자리를 잡아 둔다.
+class SummarySkeleton extends StatefulWidget {
+  final int weekNo;
+  const SummarySkeleton({super.key, required this.weekNo});
+  @override State<SummarySkeleton> createState() => _SummarySkeletonState();
+}
+class _SummarySkeletonState extends State<SummarySkeleton> with SingleTickerProviderStateMixin {
+  late final controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+  @override void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) { controller.stop(); } else if (!controller.isAnimating) { controller.repeat(reverse: true); }
+  }
+  @override void dispose() { controller.dispose(); super.dispose(); }
+  Widget bar(double width, double t) => FractionallySizedBox(widthFactor: width, alignment: Alignment.centerLeft,
+    child: Container(height: 12, margin: const EdgeInsets.only(top: 10), decoration: BoxDecoration(
+      color: Color.lerp(pageBg, brandSoft, t), borderRadius: BorderRadius.circular(6))));
+  @override Widget build(BuildContext context) => RiseIn(child: Center(child: Container(
+    margin: const EdgeInsets.only(top: 16), constraints: const BoxConstraints(maxWidth: 520),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)), clipBehavior: Clip.antiAlias,
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Container(color: brandSoft, padding: const EdgeInsets.fromLTRB(16, 14, 16, 14), child: Row(children: [
+        Expanded(child: Text('${widget.weekNo}주차를 정리하고 있어요', style: const TextStyle(fontWeight: FontWeight.w700, color: ink))),
+        const TypingDots(),
+      ])),
+      Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 18), child: AnimatedBuilder(animation: controller,
+        builder: (context, _) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          bar(0.95, controller.value), bar(0.88, controller.value), bar(0.6, controller.value),
+          const SizedBox(height: 8), bar(0.4, controller.value), bar(0.7, controller.value),
+        ]))),
+    ]))));
 }

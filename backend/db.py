@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sqlite3
@@ -43,6 +44,11 @@ CREATE TABLE IF NOT EXISTS messages (
  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, role TEXT NOT NULL,
  member_no INTEGER, body TEXT NOT NULL, page_no INTEGER, pdf_version INTEGER
 );
+CREATE TABLE IF NOT EXISTS attachments (
+ id INTEGER PRIMARY KEY, study_id INTEGER NOT NULL, session_id INTEGER NOT NULL,
+ name TEXT NOT NULL, size INTEGER NOT NULL, body TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_session ON attachments(session_id,id);
 CREATE TABLE IF NOT EXISTS review_items (
  id INTEGER PRIMARY KEY, study_id INTEGER NOT NULL, question TEXT NOT NULL,
  source_week INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open',
@@ -93,6 +99,18 @@ def migrate(db):
     message_columns = {row["name"] for row in db.execute("PRAGMA table_info(messages)")}
     if "pdf_version" not in message_columns:
         db.execute("ALTER TABLE messages ADD COLUMN pdf_version INTEGER")
+    # 첨부 파일, 복습 질문, 발표 평가처럼 말 이외의 정보가 있는 메시지에 쓴다.
+    for column, kind in (("attachment_id", "INTEGER"), ("review_id", "INTEGER"), ("data", "TEXT")):
+        if column not in message_columns:
+            db.execute(f"ALTER TABLE messages ADD COLUMN {column} {kind}")
+    # kind='review'는 끝난 스터디에서 복습만 하려고 연 대화다.
+    if "kind" not in {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}:
+        db.execute("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'study'")
+    # 이번 차례에 이어서 말할 친구들(JSON). 한 명씩 차례로 불러서 만든다.
+    if "plan" not in {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}:
+        db.execute("ALTER TABLE sessions ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
+    if "pdf_size" not in study_columns:
+        db.execute("ALTER TABLE studies ADD COLUMN pdf_size INTEGER NOT NULL DEFAULT 0")
     week_columns = {row["name"] for row in db.execute("PRAGMA table_info(weeks)")}
     if "progress_percent" not in week_columns:
         db.execute("ALTER TABLE weeks ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
@@ -120,6 +138,10 @@ def migrate(db):
     for table in ("members", "users"):
         if "avatar" not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
             db.execute(f"ALTER TABLE {table} ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
+    # 예전에 그대로 저장한 로그인 토큰은 해시로 바꾼다(로그인은 유지된다).
+    for row in db.execute("SELECT token FROM auth_tokens WHERE length(token)!=64").fetchall():
+        db.execute("UPDATE auth_tokens SET token=? WHERE token=?",
+                   (hashlib.sha256(row["token"].encode()).hexdigest(), row["token"]))
     db.execute("CREATE INDEX IF NOT EXISTS studies_user ON studies(user_id,archived)")
 
 

@@ -72,8 +72,6 @@ class MyPage extends StatelessWidget {
             title: const Text('로그아웃', style: TextStyle(fontSize: 15, color: Color(0xFFE03131))),
             onTap: () => confirmSignOut(context)),
         ])),
-        const SizedBox(height: 24),
-        const Center(child: Text('AI 스터디메이트', style: TextStyle(fontSize: 12, color: mutedInk))),
       ]),
     ))));
   }
