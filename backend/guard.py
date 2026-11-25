@@ -24,8 +24,8 @@ _TRICK = re.compile("|".join(f"(?:{p})" for p in _TRICKS), re.I | re.M)
 
 # 프롬프트 안에서만 쓰는 말. 대답에 나오면 새어 나온 것이다.
 _LEAK = re.compile(
-    r"user_preferences|study_info|room_people|absent_names|people_count|last_user_message|level_guide|persona\.|study_goal|scene_guide|turn\.(guide|called|mentioned|min_lines|max_lines)|"
-    r"source_pages|attached_files|no_questions|PEER_RULES|OPENAI_API_KEY|\[\d\.\s*(우선순위|사람|말투|내용|예시)|\[이번에 할 일\]|"
+    r"user_preferences|study_info|said_by|my_lines|my_memory|room_people|absent_names|people_count|last_user_message|level_guide|persona\.|study_goal|scene_guide|turn\.(guide|called|mentioned|min_lines|max_lines)|"
+    r"source_pages|attached_files|no_questions|PEER_RULES|OPENAI_API_KEY|\[\d\.\s*(우선순위|사람|말투|내용|예시)|\[이번에 할 (일|말)\]|\[규칙\]|\[자료\]|\[차례\]|말투 예:|아는 정도\((기초|중급|심화)\)|"
     r"sk-[A-Za-z0-9_-]{16,}|시스템 프롬프트(는|에는|에|의 내용)", re.I)
 _LINES = ("갑자기 뭔 소리야. 우리 하던 거나 마저 하자.", "뭐래, 졸리냐. 아까 하던 얘기나 이어서 하자.",
           "또 딴소리 한다. 그래서 어디까지 했더라?", "엥 그건 왜. 공부하던 거나 보자.")

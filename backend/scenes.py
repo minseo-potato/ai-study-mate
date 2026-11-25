@@ -1,71 +1,18 @@
-"""스터디 대화의 다음 장면을 확률로 고른다. 실제 스터디처럼 말하기와 묻기를 섞되, 친구들끼리만 떠들지 않게 한다."""
+"""다음에 누가 무엇을 말할지 정한다. 장면 하나를 확률로 고르고(choose_turn), 말할 사람의 차례를 짠다(turn_steps)."""
 import random
 import re
 
-# (기본 확률, 사용자에게 묻는지, 최대 말 수, AI에게 줄 설명)
-SCENES = {
-    "ask_user": (22, True, 2, "한 명이 이번 주에 자기가 공부한 것 한 조각을 말하고, 사용자는 그 부분을 어떻게 봤는지 가볍게 물어본다. "
-                              "필요하면 그 앞에 다른 동료가 한마디 보탠다."),
-    "dig_user": (24, True, 1, "한 명이 사용자가 방금 한 말에서 궁금한 부분 하나를 콕 집어 물어본다. 자기는 어떻게 생각했는지도 짧게 붙인다."),
-    "share": (24, False, 2, "질문 없이, 한두 명이 자기가 공부한 것이나 떠올린 예를 나눈다. 사용자가 한 말과 이어지게 한다. 물음표를 쓰지 않는다."),
-    "peer_ask": (14, False, 2, "동료 A가 동료 B가 앞에서 한 말(없으면 B가 공부한 부분) 중 궁금한 것을 B에게 묻고, 이어서 B가 답한다. "
-                               "정확히 두 줄이고 두 줄의 member_no는 달라야 한다. 사용자에게는 묻지 않는다."),
-    "peer_then_user": (16, True, 3, "동료 A가 동료 B가 한 말 중 궁금한 것을 B에게 묻고, B가 답한 뒤, 한 명이 사용자 생각은 어떤지 짧게 물어 대화에 끌어들인다. "
-                                    "앞의 두 줄은 서로 다른 사람이고 정확히 세 줄이다."),
-}
 MAX_QUIET = 3  # 사용자에게 묻지 않고 이어 갈 수 있는 사용자 차례 수
+MAX_LINES = 4  # 사용자가 한 번 말한 뒤 친구들이 이어 말할 수 있는 최대 줄 수
 
-
-def asks_user(name: str) -> bool:
-    return SCENES[name][1]
-
-
-def choose(talk: list, member_count: int, no_questions: bool = False, rng=random) -> str:
-    """지금까지의 학습 대화를 보고 다음 장면을 고른다. talk는 role과 body를 가진 말의 목록이다."""
-    if no_questions:
-        return "share"
-    users = [i for i, m in enumerate(talk) if m["role"] == "user"]
-    asks = [i for i, m in enumerate(talk) if m["role"] == "assistant"]
-    if not asks or not users:
-        return "ask_user"
-    weights = {name: float(s[0]) for name, s in SCENES.items()}
-    if member_count < 2:
-        weights["peer_ask"] = weights["peer_then_user"] = 0
-    said = talk[users[-1]]["body"].strip()
-    if len(said) < 8:
-        weights["dig_user"] *= 0.2  # 짧은 대답은 캐묻지 않는다.
-    if re.search(r"[?？]\s*$", said):
-        weights["share"] *= 1.6     # 사용자가 물었으면 나누는 쪽으로 기운다.
-        weights["peer_ask"] *= 0.5
-    # 마지막 질문 뒤로 사용자가 몇 번 말했는지. 묻지 않는 장면이 이어지면 사용자에게 돌아온다.
-    quiet = sum(i > asks[-1] for i in users)
-    if quiet >= MAX_QUIET or (users[-1] < len(talk) - 2 and talk[-1]["role"] == "assistant_comment"):
-        # 조용했거나, 친구들이 말한 뒤 사용자가 '이야기 이어가기'를 눌렀다.
-        for name in weights:
-            if not asks_user(name):
-                weights[name] = 0
-    # 직전 차례가 질문이었으면 이번엔 덜 묻고, 친구들끼리 주고받았으면 이번엔 덜 한다.
-    previous = talk[users[-2] + 1:users[-1]] if len(users) > 1 else talk[:users[-1]]
-    if any(m["role"] == "assistant" for m in previous):
-        for name in ("ask_user", "dig_user"):
-            weights[name] *= 0.75
-    if sum(m["role"] in ("assistant_comment", "assistant") for m in previous) >= 2:
-        weights["peer_ask"] *= 0.3
-        weights["peer_then_user"] *= 0.4
-    names = list(weights)
-    return rng.choices(names, [weights[n] for n in names])[0]
-
-
-# 사용자가 말한 직후의 장면: (기본 확률, 특정 친구를 불렀을 때 확률, 사용자에게 묻는지, 최소 말 수, 최대 말 수, 설명)
+# 장면: (보통 확률, 특정 친구를 불렀을 때, 사용자가 말하지 않았을 때, 사용자에게 묻는지)
 TURNS = {
-    "quick": (26, 42, False, 1, 1, "한 명만 짧게 받아 준다. 질문하지 않는다."),
-    "quick_ask": (16, 18, True, 1, 1, "한 명이 받아 주면서 사용자에게 궁금한 것 하나를 되묻는다."),
-    "two": (16, 10, False, 2, 2, "한 명이 받고, 다른 한 명이 새로운 생각이나 다른 의견을 보탠다. 질문하지 않는다."),
-    "share_ask": (14, 6, True, 2, 2, "한 명이 받고, 다른 한 명이 자기가 공부한 것과 이어서 사용자에게 가볍게 묻는다."),
-    "chat": (16, 16, False, 2, 3, "한 명이 받으면서 다른 동료가 앞에서 한 말이나 공부한 것을 그 동료 이름을 불러 묻고, 불린 동료가 바로 답한다. "
-                                 "할 말이 있으면 다시 한 번 받아친다. 사용자에게는 묻지 않는다."),
-    "chat_user": (12, 8, True, 3, 4, "한 명이 받으면서 다른 동료를 이름으로 불러 묻고, 불린 동료가 답한 뒤, 한 명이 사용자 생각을 짧게 묻는다."),
-    "everyone": (0, 0, False, 2, 4, "사용자가 모두에게 물었다. 동료들이 한 명씩 돌아가며 서로 다른 생각을 짧게 답한다. 앞사람 말을 되풀이하지 않는다."),
+    "quick": (28, 44, 14, False),     # 한 명이 짧게
+    "quick_ask": (16, 18, 22, True),  # 한 명이 받고 되묻기
+    "two": (18, 12, 14, False),       # 한 명이 받고 다른 한 명이 보태기
+    "share_ask": (14, 6, 24, True),   # 한 명이 받고 다른 한 명이 공부한 것과 이어 묻기
+    "chat": (24, 20, 26, False),      # 친구끼리 묻고 답하기(가끔 사용자에게 넘김)
+    "everyone": (0, 0, 0, False),     # 모두에게 물었을 때 한 명씩
 }
 EVERYONE = re.compile(r"(다들|너희|니들|얘들아|애들아|모두|각자|돌아가면서|한\s*명씩|셋\s*다|넷\s*다)")
 
@@ -114,78 +61,84 @@ def absent_names(text: str, members: list, user_name: str = "") -> list[dict]:
     return out[:3]
 
 
-def choose_turn(talk: list, text: str, members: list, no_questions: bool = False, presenting: bool = False, rng=random) -> dict:
-    """사용자의 말에 몇 명이 어떻게 반응할지 고른다. talk는 이번 말을 뺀 지금까지의 대화다."""
-    called, mentioned = names_in(text, members)
+# 방금 나온 말을 가리키는 짧은 되물음과, 이름 없이 '너'라고 부르는 말.
+_BACK = re.compile(r"^(아니\s*)?(그게|그건|이게|이건|방금\s*(그|한)\S*|그\s*말은?|무슨|뭔|왜|어째서|진짜|정말|어떻게|예를\s*들면|예시|다시|더\s*(자세히|쉽게))[^.]{0,24}$|"
+                   r"(무슨|뭔)\s*(말|뜻|소리|얘기)|뜻이야|못\s*알아|이해가?\s*안|다시\s*(말해|설명)")
+_YOU = re.compile(r"(?<![가-힣])(넌|너는|너도|네가|니가|너가|너\s|네\s*말|니\s*말)")
+_SCOLD = re.compile(r"(말한\s*적\s*(이|은)?\s*없|아니잖|틀렸|잘못\s*(말|알)|네가\s*한\s*말|니가\s*한\s*말|헛소리|엉뚱|왜\s*그렇게\s*말)")
+
+
+def addressed_back(text: str, talk: list, members: list) -> int | None:
+    """이름 없이 방금 말한 친구에게 하는 말이면 그 친구의 번호."""
+    if EVERYONE.search(text) or FACT.search(text):
+        return None
+    last = next((m for m in reversed(talk) if m["role"] != "user_file"), None)
+    if not last or not last["role"].startswith("assistant") or last["role"] == "assistant_plan":
+        return None
+    if last.get("member_no") not in {m["member_no"] for m in members}:
+        return None
+    short = len(text.strip()) <= 30
+    return last["member_no"] if (short and _BACK.search(text.strip())) or _YOU.search(text) or _SCOLD.search(text) else None
+
+
+def choose_turn(talk: list, text: str | None, members: list, no_questions: bool = False, presenting: bool = False, rng=random) -> dict:
+    """장면을 고른다. talk는 이번 말을 뺀 대화, text는 사용자의 말(None이면 사용자가 말하지 않은 사이 이어 가기)."""
+    said = text or ""
+    called, mentioned = names_in(said, members)
+    absent = absent_names(said, members) if said and not called else []
+    back = addressed_back(said, talk, members) if said and not called and not absent else None
+    if back:  # 방금 말한 친구에게 이어서 한 말이면 그 친구가 직접 받는다.
+        called = [back]
+        mentioned = [n for n in mentioned if n != back]
+    # 한 명만 짧게 답할 때: 발표 중, 지적, 없는 사람, 일정·인원 질문
+    single = presenting or bool(_SCOLD.search(said)) or (not called and (bool(absent) or bool(FACT.search(said))))
     count = len(members)
-    if not called and (absent_names(text, members) or FACT.search(text)):
-        presenting = True  # 없는 사람을 부르거나 일정·인원을 물으면 한 명만 짧게 답한다.
-    if count > 1 and not called and not presenting and EVERYONE.search(text):
+    if single:
+        shape = "quick"
+    elif text is None and no_questions:
+        shape = "quick"
+    elif count > 1 and not called and EVERYONE.search(said):
         shape = "everyone"
     else:
-        weights = {k: float(v[1] if called else v[0]) for k, v in TURNS.items()}
-        if presenting:
-            weights = {k: v if k == "quick" else 0 for k, v in weights.items()}
+        weights = {k: float(v[2] if text is None else v[1] if called else v[0]) for k, v in TURNS.items()}
+        asks = [i for i, m in enumerate(talk) if m["role"] == "assistant"]
+        quiet = sum(m["role"] == "user" for m in talk[asks[-1] + 1:]) if asks else MAX_QUIET
+        if text is None and not asks:
+            weights = {k: v if k == "share_ask" else 0 for k, v in weights.items()}  # 첫 이야기
         if count < 2:
-            for k in ("two", "share_ask", "chat", "chat_user"):
-                weights[k] = 0
-        if len(called) > 1:  # 여러 명을 불렀으면 한 명만 답하지 않는다.
-            weights["quick"] = weights["quick_ask"] = 0
-        if mentioned and count > 1:  # 다른 친구 말을 꺼냈으면 그 친구도 끼어들기 쉽다.
-            weights["two"] *= 1.5
+            weights["two"] = weights["chat"] = 0
+        if mentioned:
             weights["chat"] *= 2
-        if re.search(r"[?？]\s*$", text):
-            weights["quick_ask"] *= 0.5
-        if no_questions:
-            weights = {k: v if k in ("quick", "two") else 0 for k, v in weights.items()}
-            if not any(weights.values()):
-                weights["two" if count > 1 else "quick"] = 1
-        else:
-            # 질문 없는 차례가 이어지면 사용자에게 돌아오고, 바로 앞에서 물었으면 조금 덜 묻는다.
-            asks = [i for i, m in enumerate(talk) if m["role"] == "assistant"]
-            quiet = sum(m["role"] == "user" for m in talk[asks[-1] + 1:]) if asks else MAX_QUIET
-            for k, v in TURNS.items():
-                if quiet >= MAX_QUIET - 1 and not called and not presenting and not v[2]:
-                    weights[k] = 0
-                elif quiet == 0 and v[2]:
-                    weights[k] *= 0.75
-        # 직전에 여럿이 떠들었으면 이번엔 짧게 간다.
-        recent = 0
-        for m in reversed(talk):
-            if m["role"] == "user":
-                break
-            recent += m["role"].startswith("assistant")
-        if recent >= 3:
-            for k in ("two", "chat", "chat_user"):
-                weights[k] *= 0.4
-        names = list(weights)
-        shape = rng.choices(names, [weights[k] for k in names])[0]
-    _, _, asks_back, low, high, guide = TURNS[shape]
-    if shape == "everyone":
-        low = high = min(4, count)
-    if len(called) > high:
-        high = min(4, len(called))
-    return {"shape": shape, "asks": asks_back, "min_lines": max(low, min(len(called), 4)), "max_lines": high, "guide": guide,
-            "called": called, "mentioned": mentioned,
-            "similar": next((x["similar"] for x in absent_names(text, members) if x["similar"]), None)}
+        for k, v in TURNS.items():
+            if no_questions and (v[3] or k == "chat"):
+                weights[k] = 0
+            elif quiet >= MAX_QUIET - 1 and not called and not no_questions and not v[3]:
+                weights[k] = 0  # 묻지 않는 차례가 이어졌으면 사용자에게 돌아온다.
+            elif quiet == 0 and v[3] and text is not None:
+                weights[k] *= 0.75
+        recent = next((i for i, m in enumerate(reversed(talk)) if m["role"] == "user"), len(talk))
+        if recent >= 3:  # 직전에 여럿이 말했으면 짧게 간다.
+            weights["two"] *= 0.4
+            weights["chat"] *= 0.4
+        if not any(weights.values()):
+            weights["quick"] = 1
+        shape = rng.choices(list(weights), list(weights.values()))[0]
+    return {"shape": shape, "asks": TURNS[shape][3], "called": called, "mentioned": mentioned, "start": text is None,
+            "similar": next((x["similar"] for x in absent if x["similar"]), None)}
 
 
-# 말하는 종류마다 그 친구에게 주는 할 일. {to}에는 상대 친구 이름이 들어간다.
+# 말하는 종류마다 그 친구에게 주는 할 일.
 TASKS = {
-    "react": "사용자의 방금 말을 받아 주세요. 물었으면 바로 답하고, 생각을 말했으면 자기 생각이나 예, 다르게 보는 점 하나를 말하세요. 질문하지 마세요.",
-    "react_ask": "사용자의 방금 말을 짧게 받고, 그 말에서 궁금한 것 하나를 사용자에게 되물으세요.",
-    "react_ask_peer": "사용자의 방금 말을 짧게 받고, {to}에게 이름을 불러 물으세요. {to}가 앞에서 실제로 한 말이나 관심사에서 궁금한 것 하나만.",
-    "each": "사용자가 모두에게 물었습니다. 자기 생각을 짧게 답하세요. 다른 친구가 이미 말한 것과 다른 이야기를 하고 질문하지 마세요.",
-    "add": "바로 앞 말에 이어, 아직 안 나온 생각이나 다른 의견을 하나 보태세요. 누구 말에 대한 것인지 드러나게. 질문하지 마세요.",
-    "share": "이번 주 범위에서 자기가 공부한 것이나 떠올린 예 하나를 나누세요. 지금 이야기와 이어지게. 질문하지 마세요.",
-    "share_ask": "이번 주 범위에서 자기가 공부한 것 한 조각을 말하고, 사용자는 어떻게 봤는지 가볍게 하나 물으세요.",
-    "dig": "사용자가 방금 한 말에서 궁금한 부분 하나를 콕 집어 사용자에게 물으세요. 자기 생각도 짧게 붙이세요.",
-    "ask_peer": "{to}에게 이름을 불러 물으세요. {to}가 앞에서 실제로 한 말 중 궁금한 것 하나, 없으면 {to}는 이번 주에 뭘 봤는지.",
-    "answer_peer": "{to}가 당신을 불러 물었습니다. 물은 것에 바로 답하세요. 되묻지 마세요.",
-    "ask_user": "지금까지 친구들이 나눈 이야기를 사용자에게 넘기세요. 사용자는 어떻게 생각하는지 짧게 하나만 물으세요.",
+    "react": "상대의 방금 말을 받아 준다. 물었으면 바로 답하고, 생각을 말했으면 내 생각이나 다르게 보는 점 하나를 말한다. 되묻지 않는다.",
+    "react_ask": "상대의 방금 말이나 지금 이야기를 짧게 받고, 궁금한 것 하나를 상대에게 묻는다.",
+    "each": "모두에게 물었다. 다른 친구와 다른 내 생각을 짧게 답한다. 되묻지 않는다.",
+    "add": "바로 앞 말에 아직 안 나온 생각이나 다른 의견 하나를 보탠다. 누구 말에 대한 것인지 드러낸다. 묻지 않는다.",
+    "share": "이번 주 범위에서 내가 공부한 것 하나를 지금 이야기와 이어 나눈다. 묻지 않는다.",
+    "share_ask": "이번 주 범위에서 내가 공부한 것 하나를 말하고, 상대는 어떻게 봤는지 가볍게 묻는다.",
+    "ask_peer": "방금 나온 말을 짧게 받고, '말을 걸 친구'의 이름을 불러 그 친구가 앞에서 한 말 중 궁금한 것 하나를 묻는다.",
+    "answer_peer": "'말을 걸 친구'가 나를 불러 물었다. '나에게 물은 말'에서 나에게 물은 것에만 바로 답한다. 되묻지 않는다.",
 }
-ASKING = {"react_ask", "share_ask", "dig", "ask_user"}
-MAX_LINES = 5  # 사용자가 한 번 말한 뒤 친구들이 이어 말할 수 있는 최대 줄 수
+ASKING = {"react_ask", "share_ask"}
 
 
 def step(kind: str, member_no: int, to: int | None = None) -> dict:
@@ -226,63 +179,43 @@ def speakers(talk: list, members: list, first: list, rng=random, text: str = "")
 
 
 def turn_steps(turn: dict, talk: list, members: list, asker: int | None = None, rng=random, text: str = "") -> list[dict]:
-    """사용자의 말 뒤에 누가 무엇을 할지 차례를 짠다. asker는 직전에 물었던 친구다."""
-    called = turn["called"]
-    first = list(called)
+    """장면에 맞춰 누가 무엇을 할지 차례를 짠다. asker는 직전에 물었던(또는 먼저 말할) 친구다."""
+    called, shape = turn["called"], turn["shape"]
     match = fit(text, members)
     best = max(match.values(), default=0)
-    # 내용에 딱 맞는 역할이 있으면 대개 그 친구가, 아니면 방금 물었던 친구가 받는다.
-    if not first and best >= 2 and rng.random() < 0.8:
-        first = [rng.choice([n for n, v in match.items() if v == best])]
-    if not first and not turn.get("similar") and asker and rng.random() < 0.6:
-        first = [asker]
-    if turn.get("similar") and not called:  # 잘못 불린 것 같은 친구가 나서서 확인한다.
+    first = list(called)
+    if not first and turn.get("similar"):  # 잘못 불린 것 같은 친구가 나서서 확인한다.
         first = [m["member_no"] for m in members if m["name"] == turn["similar"]]
+    elif not first and best >= 2 and rng.random() < 0.8:  # 내용에 맞는 역할이 대개 먼저 나선다.
+        first = [rng.choice([n for n, v in match.items() if v == best])]
+    elif not first and asker and (turn.get("start") or rng.random() < 0.6):
+        first = [asker]
     order = speakers(talk, members, first, rng, text)
-    if turn["mentioned"] and len(order) > 1:  # 말 속에 나온 친구에게 이야기가 가게 한다.
-        target = next((n for n in turn["mentioned"] if n != order[0]), None)
-        if target:
-            order = [order[0], target] + [n for n in order[1:] if n != target]
-    shape = turn["shape"]
+    target = next((n for n in turn["mentioned"] if n != order[0]), None)
+    if target:  # 말 속에 나온 친구에게 이야기가 가게 한다.
+        order = [order[0], target] + [n for n in order[1:] if n != target]
+    a, b = order[0], order[1] if len(order) > 1 else None
+    opening = "share" if turn.get("start") else "react"
     if shape == "everyone":
         return [step("each", n) for n in order[:4]]
     if len(called) > 1:
         return [step("react" if i == 0 else "each", n) for i, n in enumerate(called[:4])]
-    a, b = order[0], order[1] if len(order) > 1 else None
-    if shape == "quick" or (b is None and shape != "quick_ask"):
-        return [step("react", a)]
     if shape == "quick_ask":
         return [step("react_ask", a)]
-    if shape == "two":
-        return [step("react", a), step("add", b, a)]
     if shape == "share_ask":
-        return [step("react", a), step("share_ask", b)]
+        return [step("share_ask", a)] if turn.get("start") or b is None else [step("react", a), step("share_ask", b)]
+    if shape == "quick" or b is None:
+        return [step(opening, a)]
+    if shape == "two":
+        return [step(opening, a), step("add", b, a)]
     # 친구끼리 물을 때는 덜 아는 쪽이 묻고 더 아는 쪽이 답하는 일이 많다.
     rank = {m["member_no"]: LEVEL_RANK.get(m.get("level"), 1) for m in members}
-    if not called and not turn["mentioned"]:
-        if rank[a] > rank[b] and best < 2 and rng.random() < 0.7:
-            a, b = b, a
-        elif rank[a] == rank[b] and len(order) > 2 and rank[order[2]] > rank[b] and rng.random() < 0.5:
-            order[1], order[2] = order[2], order[1]
-            b = order[1]
-    steps = [step("react_ask_peer", a, b), step("answer_peer", b, a)]
-    if shape == "chat_user":
-        return steps + [step("ask_user", next((n for n in order if n not in (a, b)), a))]
-    return steps + ([step("add", a, b)] if rng.random() < 0.3 else [])
-
-
-def scene_steps(scene: str, talk: list, members: list, starter: int, rng=random) -> list[dict]:
-    """사용자의 말 없이 이야기를 이어 갈 때의 차례."""
-    order = speakers(talk, members, [starter], rng)
-    a, b = order[0], order[1] if len(order) > 1 else None
-    if scene == "dig_user":
-        return [step("dig", a)]
-    if scene == "share":
-        return [step("share", a)] + ([step("add", b, a)] if b and rng.random() < 0.4 else [])
-    if scene in ("peer_ask", "peer_then_user") and b:
-        steps = [step("ask_peer", a, b), step("answer_peer", b, a)]
-        return steps + ([step("ask_user", order[2] if len(order) > 2 else a)] if scene == "peer_then_user" else [])
-    return [step("share_ask", a)]
+    if not called and not turn["mentioned"] and best < 2 and rank[a] > rank[b] and rng.random() < 0.7:
+        a, b = b, a
+    steps = [step("ask_peer", a, b), step("answer_peer", b, a)]
+    if rng.random() < 0.35:  # 친구끼리 주고받은 뒤 사용자에게 넘긴다.
+        steps.append(step("react_ask", next((n for n in order if n not in (a, b)), a)))
+    return steps
 
 
 def follow(steps: list, kind: str, text: str, speaker: int, members: list, spoken: int) -> list:

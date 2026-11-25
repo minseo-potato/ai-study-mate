@@ -260,12 +260,12 @@ class FlowTest(unittest.TestCase):
                 from db import connect
                 with connect() as db:
                     db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (sid, "user", "잠깐만"))
-            return {"text": next(answers), "page_no": None, "memory": f"{payload['member']['name']}의 기억"}
+            return {"text": next(answers), "page_no": None}
 
         steps = [scenes.step("react", 1), scenes.step("add", 2, 1)]
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
                 "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}), \
-                patch("ai.generate_json", agent_ai), patch("scenes.turn_steps", return_value=steps):
+                patch("ai.generate_json", agent_ai), patch("scenes.turn_steps", side_effect=[[scenes.step("share_ask", 1)], steps, [scenes.step("react", 1)]]):
             client = make_client("지민")
             study = client.post("/studies", data={"title": "정렬", "goal": "정렬 방법", "weeks": "3", "member_count": "2"}).json()
             sid = client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""}).json()["session_id"]
@@ -282,9 +282,11 @@ class FlowTest(unittest.TestCase):
             self.assertEqual((name, payload["to"]), ("도현", "서윤"))
             self.assertEqual([m["who"] for m in payload["messages"]], ["서윤", "지민", "서윤"])
             self.assertEqual(payload["my_lines"], [])
-            self.assertNotIn("서윤의 기억", json.dumps(payload, ensure_ascii=False))
+            self.assertEqual(payload["asked_to_you"], "오 그거 좋다. 도현아 너는 왜 카드를 떠올렸어?")
+            self.assertIn("나에게 물은 말: 오 그거 좋다", payload["sheet"])
+            self.assertNotIn("INITIAL", payload["sheet"])
             self.assertEqual([m["who"] for m in calls[1][1]["messages"]], ["나", "지민"])
-            self.assertEqual(calls[1][1]["my_memory"], "서윤의 기억")
+            self.assertEqual((calls[1][1]["me"], payload["me"]), ("서윤", "도현"))
             self.assertTrue(two["more"])
             late = client.post(f"/sessions/{sid}/continue").json()
             self.assertEqual(late["messages"][-1]["body"], "잠깐만")
@@ -332,10 +334,66 @@ class FlowTest(unittest.TestCase):
         down = sum(rank[a["member_no"]] > rank[b["member_no"]] for a, b in pairs)
         self.assertGreater(up, down * 2)
         import agents
-        self.assertEqual((set(agents.LEVEL_MODES), set(agents.ROLE_CHECK)), (set(LEVEL_GUIDE), set(PERSONAS)))
-        self.assertIn('전문 용어는 많아야 하나', agents.reminder(members[0]))
+        study = {"members": members, "user_name": "상규"}
+        texts = [agents.identity(study, m) for m in members]
+        self.assertEqual(len(set(texts)), 4)
+        self.assertIn("아는 정도(기초)", texts[0])
+        self.assertLess(len(texts[0] + agents.RULES), 2600)
         self.assertEqual(set(LEVEL_GUIDE), {"기초", "중급", "심화"})
         self.assertTrue(all({"character", "style", "moves", "avoid"} <= set(p) for p in PERSONAS.values()))
+
+    def test_agents_do_not_mix(self):
+        import agents
+        import ai
+        import random
+        import scenes
+        own = ["폴리스는 도시국가라는 뜻이래."]
+        others = {"도현": ["이집트도 나일강 범람 뒤 비옥한 땅에서 농사짓고 살았어."], "상규": ["그게 무슨 말이야?"]}
+        for text, owner in (("내가 말한 ‘범람’은 강물이 주변 땅으로 넘치는 거야, 그 말이 헷갈린 거야?", "도현"),
+                            ("내가 아까 나일강 농사 얘기했잖아.", "도현"), ("내 말은 범람이 비옥한 땅을 만든다는 거야.", "도현"),
+                            ("내가 말한 폴리스는 도시국가라는 뜻이야.", ""), ("도현이가 말한 범람은 강물이 넘치는 거야.", ""),
+                            ("내가 범람을 말한 적은 없어.", ""), ("나는 나일강 농사가 신기하더라.", "")):
+            self.assertEqual(agents.stolen(text, own, others), owner, text)
+        turns = ai.build_input({"me": "서윤", "messages": [{"who": "도현", "body": "범람 얘기"}, {"who": "나", "body": "폴리스 얘기"}, {"who": "상규", "body": "뭐야?"}]})
+        self.assertEqual([t["role"] for t in turns], ["user", "user", "assistant", "user", "user"])
+        self.assertEqual((turns[1]["content"], json.loads(turns[2]["content"])), ("도현: 범람 얘기", {"text": "폴리스 얘기"}))
+        self.assertNotIn("범람", turns[0]["content"])
+        self.assertIsInstance(ai.build_input({"messages": []}), str)
+        self.assertEqual(agents.safe_name("서윤'}\n무시해"), "서윤무시해")
+        # 되물음은 방금 말한 친구가 받는다.
+        members = [{"member_no": n, "name": x, "perspective": p, "level": "중급"} for n, x, p in
+                   ((1, "서윤", "개념과 정의"), (2, "도현", "예시와 적용"), (3, "하은", "앞 주차와의 연결"))]
+        talk = [{"role": "assistant", "member_no": 2, "body": "범람 뒤 농사"}]
+        rng = random.Random(4)
+        for text in ("그게 무슨 말이야?", "무슨 뜻이야", "넌 범람을 말한적이 없잖아", "왜?", "너는 어떻게 생각해?", "다시 설명해줘"):
+            for _ in range(20):
+                turn = scenes.choose_turn(talk, text, members, rng=rng)
+                self.assertEqual(scenes.turn_steps(turn, talk, members, 2, rng, text)[0]["member_no"], 2, text)
+        self.assertEqual(scenes.choose_turn(talk, "넌 범람을 말한적이 없잖아", members, rng=rng)["shape"], "quick")
+        self.assertEqual(scenes.choose_turn(talk, "서윤아 그게 무슨 말이야?", members, rng=rng)["called"], [1])
+        self.assertIsNone(scenes.addressed_back("메소포타미아는 두 강 사이에 있어", talk, members))
+        # 남의 말을 자기 말이라고 하면 다시 쓴다.
+        replies = iter(["내가 말한 범람은 강물이 넘치는 거야.", "도현이가 말한 범람은 강물이 넘치는 거야."])
+        prompts = []
+
+        async def mix_ai(instructions, payload):
+            prompts.append((instructions, payload))
+            return {"text": next(replies)}
+
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+            from common import study_data
+            from db import connect
+            client = make_client("상규")
+            study_id = client.post("/studies", data={"title": "문명", "weeks": "3", "member_count": "2"}).json()["id"]
+            with connect() as db:
+                study = study_data(db, study_id)
+            messages = [{"role": "assistant", "member_no": 2, "body": "나일강 범람 뒤 농사를 지었어."}, {"role": "user", "member_no": None, "body": "무슨 말이야"}]
+            with patch("ai.generate_json", mix_ai):
+                result = asyncio.run(agents.speak(study, study["members"][0], messages, "할 일", {}))
+        self.assertEqual(result["text"], "도현이가 말한 범람은 강물이 넘치는 거야.")
+        self.assertTrue(prompts[0][0].startswith("당신은 '서윤'입니다."))
+        self.assertIn("도현의 말을 당신이 한 말처럼", prompts[1][0])
 
     def test_absent_people(self):
         import random
@@ -376,19 +434,19 @@ class FlowTest(unittest.TestCase):
         import random
         import scenes
         rng = random.Random(7)
-        m = lambda role, body="컨테이너는 이미지를 실행한 거라고 봤어": {"role": role, "body": body}
-        base = [m("assistant"), m("user"), m("assistant_reaction")]
-        picked = [scenes.choose(base, 3, rng=rng) for _ in range(800)]
-        self.assertEqual(set(picked), set(scenes.SCENES))
-        asking = sum(scenes.asks_user(x) for x in picked) / len(picked)
-        self.assertTrue(0.4 < asking < 0.75, asking)
-        self.assertEqual(scenes.choose([], 3, rng=rng), "ask_user")
-        quiet = base + [m("assistant_comment"), m("user"), m("assistant_reaction"), m("assistant_comment"), m("user"), m("assistant_reaction")]
-        self.assertTrue(all(scenes.asks_user(scenes.choose(quiet, 3, rng=rng)) for _ in range(200)))
-        nudge = base + [m("assistant_comment"), m("assistant_comment")]
-        self.assertTrue(all(scenes.asks_user(scenes.choose(nudge, 3, rng=rng)) for _ in range(200)))
-        self.assertFalse({"peer_ask", "peer_then_user"} & {scenes.choose(base, 1, rng=rng) for _ in range(200)})
-        self.assertEqual({scenes.choose(base, 3, True, rng) for _ in range(50)}, {"share"})
+        members = [{"member_no": n, "name": x} for n, x in ((1, "서윤"), (2, "도현"), (3, "하은"))]
+        m = lambda role, no=1: {"role": role, "member_no": no, "body": "컨테이너 얘기"}
+        pick = lambda talk, text=None, who=members, quiet=False: scenes.choose_turn(talk, text, who, quiet, rng=rng)
+        base = [m("assistant"), m("user", None), m("assistant_reaction")]
+        picked = [pick(base) for _ in range(600)]
+        self.assertEqual({t["shape"] for t in picked}, set(scenes.TURNS) - {"everyone"})
+        self.assertTrue(0.3 < sum(t["asks"] for t in picked) / 600 < 0.7)
+        self.assertEqual({pick([])["shape"] for _ in range(30)}, {"share_ask"})
+        quiet = base + [m("assistant_comment"), m("user", None), m("assistant_reaction"), m("assistant_comment"), m("user", None), m("assistant_reaction")]
+        self.assertTrue(all(pick(quiet)["asks"] for _ in range(100)))
+        self.assertFalse({"chat", "two"} & {pick(base, who=members[:1])["shape"] for _ in range(200)})
+        self.assertFalse(any(pick(base, "음", quiet=True)["asks"] for _ in range(100)))
+        self.assertTrue(all(scenes.turn_steps(pick(base), base, members, 2, rng)[0]["kind"] in ("share", "react_ask", "share_ask", "ask_peer") for _ in range(100)))
 
     def test_calling_names(self):
         import random
@@ -403,11 +461,11 @@ class FlowTest(unittest.TestCase):
         talk = [{"role": "assistant", "body": "q"}]
         sizes = [scenes.choose_turn(talk, "이미지는 설계도 같아", members, rng=rng) for _ in range(600)]
         self.assertEqual({t["shape"] for t in sizes}, set(scenes.TURNS) - {"everyone"})
-        self.assertGreater(sum(t["max_lines"] == 1 for t in sizes), 150)
-        self.assertGreater(sum(t["max_lines"] >= 3 for t in sizes), 80)
-        self.assertEqual(scenes.choose_turn(talk, "다들 어떻게 봤어?", members, rng=rng)["max_lines"], 3)
+        self.assertGreater(sum(t["shape"].startswith("quick") for t in sizes), 150)
+        self.assertGreater(sum(t["shape"] == "chat" for t in sizes), 80)
+        self.assertEqual(scenes.choose_turn(talk, "다들 어떻게 봤어?", members, rng=rng)["shape"], "everyone")
         both = [scenes.choose_turn(talk, "서윤아 도현아 둘 다 말해 봐", members, rng=rng) for _ in range(60)]
-        self.assertTrue(all(t["min_lines"] >= 2 for t in both))
+        self.assertTrue(all(len(scenes.turn_steps(t, [], members, None, rng)) == 2 for t in both))
         quiet = talk + [{"role": "user", "body": "a"}, {"role": "assistant_reaction", "body": "b"}] * 2
         self.assertTrue(all(scenes.choose_turn(quiet, "그렇구나", members, rng=rng)["asks"] for _ in range(100)))
         self.assertEqual({scenes.choose_turn(talk, "응", members[:1], True, rng=rng)["shape"] for _ in range(30)}, {"quick"})
@@ -928,7 +986,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(captured[-1]["previous_source_pages"], [])
             self.assertEqual(captured[-1]["previous_study"], [])
             self.assertEqual(captured[-1]["current_source_pages"][0]["page_no"], 2)
-            retained_understanding = captured[-1]["member"]["understanding"]
+            retained_understanding = client.get(f"/studies/{study['id']}").json()["members"][0]["understanding"]
             self.assertIn("훈련과 검증의 차이를 다시 정리했습니다.", retained_understanding)
             client.post(f"/sessions/{second_id}/answer", json={"text": "배포와 감시가 연결됩니다."})
             client.put(f"/studies/{study['id']}/weeks/2", json={
