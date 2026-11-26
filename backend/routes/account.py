@@ -130,12 +130,13 @@ def my_records(user: dict = Depends(current_user)):
             " ORDER BY r.study_id DESC,r.source_week,r.id", (user["id"],))]
         weeks = []
         for row in db.execute(
-                "SELECT s.id AS session_id,s.study_id,st.title AS study_title,s.week_no,w.title,s.minutes"
+                "SELECT s.id AS session_id,s.study_id,st.title AS study_title,s.week_no,w.title,s.minutes,s.kind"
                 " FROM sessions s JOIN studies st ON st.id=s.study_id"
                 " JOIN weeks w ON w.study_id=s.study_id AND w.week_no=s.week_no"
                 " WHERE st.user_id=? AND s.status='finished' AND s.kind!='review' ORDER BY s.week_no,s.id", (user["id"],)):
             minutes = json.loads(row["minutes"]) if row["minutes"] else {}
-            weeks.append({k: row[k] for k in ("session_id", "study_id", "study_title", "week_no", "title")}
+            weeks.append({k: row[k] for k in ("session_id", "study_id", "study_title", "week_no", "title", "kind")}
+                         | ({"title": "최종 발표"} if row["kind"] == "presentation" else {})
                          | {"summary": minutes.get("summary", ""), "keywords": minutes.get("keywords", []),
                             "stats": minutes.get("stats", {}), "learned": minutes.get("learned", [])[:2],
                             "evaluated": bool(minutes.get("evaluation"))})

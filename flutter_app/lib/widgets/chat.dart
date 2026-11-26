@@ -97,6 +97,19 @@ class _TypingDotsState extends State<TypingDots> with SingleTickerProviderStateM
 
 
 /// 채팅 안에서 주차가 바뀌는 지점을 알려주는 알약 모양 구분선.
+/// 대화 단계 이름: 'N주차 · 제목' 또는 '최종 발표'.
+bool isPresentationStage(Map s) => s['kind'] == 'presentation';
+String stageTitle(Map s) => isPresentationStage(s) ? '최종 발표' : '${s['week_no']}주차 · ${(s['week'] as Map)['title']}';
+
+/// 주차를 모두 마친 뒤 이어지는 최종 발표 안내.
+class PresentationNextLine extends StatelessWidget {
+  const PresentationNextLine({super.key});
+  @override Widget build(BuildContext context) => const Row(children: [
+    Icon(Icons.campaign_rounded, size: 16, color: brand), SizedBox(width: 8),
+    Expanded(child: Text('다음은 최종 발표예요', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: ink))),
+  ]);
+}
+
 class WeekDivider extends StatelessWidget {
   final Map<String, dynamic> session;
   const WeekDivider({super.key, required this.session});
@@ -105,7 +118,7 @@ class WeekDivider extends StatelessWidget {
     child: Center(child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: BoxDecoration(color: const Color(0xFFE6E8EC), borderRadius: BorderRadius.circular(20)),
-      child: Text('${session['week_no']}주차 · ${(session['week'] as Map)['title']}',
+      child: Text(stageTitle(session),
         style: const TextStyle(fontSize: 12, color: Color(0xFF5B5F68), fontWeight: FontWeight.w600)))));
 }
 
@@ -131,8 +144,10 @@ class StudySummaryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             const Icon(Icons.check_circle_rounded, size: 18, color: brand), const SizedBox(width: 8),
-            Expanded(child: Text('${session['week_no']}주차 정리', style: const TextStyle(fontWeight: FontWeight.w700, color: ink))),
-            Text('${session['week_no']}/${session['total_weeks']}주', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
+            Expanded(child: Text(isPresentationStage(session) ? '최종 발표 정리' : '${session['week_no']}주차 정리',
+              style: const TextStyle(fontWeight: FontWeight.w700, color: ink))),
+            Text(isPresentationStage(session) ? '스터디 완료' : '${session['week_no']}/${session['total_weeks']}주',
+              style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
           ]),
           const SizedBox(height: 10),
           WeekDots(total: session['total_weeks'] as int, done: session['week_no'] as int),
@@ -147,7 +162,10 @@ class StudySummaryCard extends StatelessWidget {
         ])),
         if (session['next_week'] is Map) Container(
           decoration: const BoxDecoration(border: Border(top: BorderSide(color: lineColor))),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12), child: NextWeekLine(session['next_week'] as Map)),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12), child: NextWeekLine(session['next_week'] as Map))
+        else if (session['presentation_next'] == true) Container(
+          decoration: const BoxDecoration(border: Border(top: BorderSide(color: lineColor))),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12), child: const PresentationNextLine()),
       ])));
     return fresh ? RiseIn(child: card) : card;
   }
@@ -319,11 +337,12 @@ class FinishSheet extends StatelessWidget {
   @override Widget build(BuildContext context) {
     final next = session['next_week'] as Map?;
     final weekNo = session['week_no'] as int;
+    final toPresentation = session['presentation_next'] == true;
     return SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Text(next == null ? '스터디를 마칠까요?' : '$weekNo주차를 마칠까요?',
+      Text(next == null && !toPresentation ? '스터디를 마칠까요?' : '$weekNo주차를 마칠까요?',
         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: ink)),
       const SizedBox(height: 4),
-      Text('${(session['week'] as Map)['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+      Text(isPresentationStage(session) ? '최종 발표' : '${(session['week'] as Map)['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 14, color: subInk)),
       const SizedBox(height: 18),
       TweenAnimationBuilder<double>(tween: Tween(begin: MediaQuery.disableAnimationsOf(context) ? 1 : 0, end: 1),
@@ -333,10 +352,11 @@ class FinishSheet extends StatelessWidget {
       Container(padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(color: pageBg, borderRadius: BorderRadius.circular(14)),
         child: Row(children: [stat('내가 한 말', said < 0 ? 0 : said), stat('올린 파일', files), stat('복습 표시', reviews)])),
-      if (next != null) Padding(padding: const EdgeInsets.fromLTRB(4, 16, 4, 0), child: NextWeekLine(next)),
+      if (next != null) Padding(padding: const EdgeInsets.fromLTRB(4, 16, 4, 0), child: NextWeekLine(next))
+      else if (toPresentation) const Padding(padding: EdgeInsets.fromLTRB(4, 16, 4, 0), child: PresentationNextLine()),
       const SizedBox(height: 22),
       FilledButton(onPressed: () => Navigator.pop(context, true),
-        child: Text(next == null ? '스터디 마치기' : '정리하고 ${next['week_no']}주차로')),
+        child: Text(next != null ? '정리하고 ${next['week_no']}주차로' : toPresentation ? '정리하고 발표로' : '스터디 마치기')),
       const SizedBox(height: 6),
       TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('더 이야기하기')),
     ]));

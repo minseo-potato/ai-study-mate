@@ -363,7 +363,7 @@ class _SessionPageState extends State<SessionPage> {
   Future<void> finish() async {
     final s = session!;
     final review = s['kind'] == 'review';
-    final hasNext = !review && (s['week_no'] as int) < (s['total_weeks'] as int);
+    final hasNext = !review && ((s['week_no'] as int) < (s['total_weeks'] as int) || s['presentation_next'] == true);
     if (!review) {
       final talk = s['messages'] as List;
       int count(String role) => talk.where((m) => m['role'] == role).length;
@@ -466,12 +466,12 @@ class _SessionPageState extends State<SessionPage> {
           Row(children: [
             Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(8)),
-              child: Text('${s['week_no']}/${s['total_weeks']}주차',
+              child: Text(isPresentationStage(s) ? '발표' : '${s['week_no']}/${s['total_weeks']}주차',
                 style: const TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w700))),
             const SizedBox(width: 8),
-            Expanded(child: Text('${week['title']}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
+            Expanded(child: Text(isPresentationStage(s) ? '최종 발표' : '${week['title']}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
           ]),
-          if ('${week['scope']}'.trim() != '${week['title']}'.trim()) ...[
+          if (!isPresentationStage(s) && '${week['scope']}'.trim() != '${week['title']}'.trim()) ...[
             const SizedBox(height: 8),
             Text('${week['scope']}', style: const TextStyle(height: 1.5, color: subInk)),
           ],
@@ -588,7 +588,8 @@ class _SessionPageState extends State<SessionPage> {
   });
   Widget composer(Map<String, dynamic> s, List messages, bool awaiting, bool finished) {
     if (finished) {
-      if (busy || busyAction != null || (continuous && freshId == id && (s['week_no'] as int) < (s['total_weeks'] as int))) {
+      final moving = (s['week_no'] as int) < (s['total_weeks'] as int) || s['presentation_next'] == true;
+      if (busy || busyAction != null || (continuous && freshId == id && moving)) {
         return const SizedBox(height: 48);
       }
       return FilledButton(onPressed: continuous ? () => openRoom(restart: s['kind'] != 'review') : () => Navigator.pop(context),
@@ -699,7 +700,7 @@ class _SessionPageState extends State<SessionPage> {
           crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(roomTitle.isEmpty ? '${s?['week_no'] ?? ''}주차' : roomTitle, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-          if (s != null) Text('${s['week_no']}/${s['total_weeks']}주차 · ${(s['week'] as Map)['title']}',
+          if (s != null) Text(isPresentationStage(s) ? '모든 주차 완료 · 최종 발표' : '${s['week_no']}/${s['total_weeks']}주차 · ${(s['week'] as Map)['title']}',
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: mutedInk)),
         ]))]))),

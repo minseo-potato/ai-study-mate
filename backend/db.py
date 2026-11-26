@@ -109,6 +109,9 @@ def migrate(db):
     # 이번 차례에 이어서 말할 친구들(JSON). 한 명씩 차례로 불러서 만든다.
     if "plan" not in {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}:
         db.execute("ALTER TABLE sessions ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
+    # 1이면 모든 주차를 마친 뒤 발표를 따로 한다. 이미 있던 스터디(0)는 마지막 주가 발표 주인 예전 방식을 그대로 쓴다.
+    if "separate_presentation" not in study_columns:
+        db.execute("ALTER TABLE studies ADD COLUMN separate_presentation INTEGER NOT NULL DEFAULT 0")
     if "pdf_size" not in study_columns:
         db.execute("ALTER TABLE studies ADD COLUMN pdf_size INTEGER NOT NULL DEFAULT 0")
     # 사용자가 친구마다 적어 둔 성격·말투 조정 한두 줄

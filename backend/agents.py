@@ -96,9 +96,7 @@ def study_info(study: dict, week_no: int | None = None) -> dict:
     listed = []
     for w in weeks:
         item = {"week_no": w["week_no"], "title": w["title"], "scope": w["scope"], "meeting_date": w["meeting_date"],
-                "state": "지금" if w["week_no"] == week_no else "끝남" if w["status"] == "complete" else "아직 안 함"}
-        if w["week_no"] == len(weeks) > 1:
-            item["presentation"] = True
+                "state": "끝남" if w["status"] == "complete" else "지금" if w["week_no"] == week_no else "아직 안 함"}
         if w["week_no"] in study["week_notes"] and w["week_no"] != week_no:
             item["what_we_did"] = study["week_notes"][w["week_no"]]
         listed.append(item)
@@ -106,6 +104,7 @@ def study_info(study: dict, week_no: int | None = None) -> dict:
     return {"room_name": study["title"], "topic": study["goal"], "today": date.today().isoformat(),
             "friends": people, "friend_count": len(people), "people_count": len(people) + 1, "user": study["user_name"],
             "total_weeks": len(weeks), "current_week": next(w for w in listed if w["week_no"] == week_no), "weeks": listed,
+            "all_done": bool(weeks) and all(w["status"] == "complete" for w in weeks),
             "material": {"name": study["pdf_name"], "pages": study["page_count"]} if study["pdf_name"] else None}
 
 
@@ -126,7 +125,11 @@ def sheet(study: dict, member: dict, messages: list, extra: dict, context: dict,
         near = abs(w["week_no"] - now) <= 1
         note = w.get("what_we_did", {}).get("summary", "")[:160] if now - w["week_no"] <= 2 else ""
         lines.append(f"- {w['week_no']}주차[{w['state']}] {w['title']}" + (f": {w['scope']}" if near else "")
-                     + f" ({w['meeting_date']}{', 발표' if w.get('presentation') else ''})" + (f" / 한 일: {note}" if note else ""))
+                     + f" ({w['meeting_date']})" + (f" / 한 일: {note}" if note else ""))
+    if info["all_done"]:
+        lines.append("모든 주차 공부를 마쳤음. 최종 발표는 주차와 따로 함")
+    else:
+        lines.append("발표는 모든 주차를 마친 뒤 따로 함")
     if context["user_preferences"]:
         lines.append("진행 방식: " + ", ".join(map(str, context["user_preferences"])))
     if absent:

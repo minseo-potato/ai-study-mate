@@ -144,7 +144,8 @@ async def first_plan(title: str, goal: str, weeks: int, pages: list) -> dict:
         result = await ai.generate_json(
             "한국어 주간 학습 계획을 제안하세요. JSON 키는 weeks이며 항목은 week_no,title,scope입니다. 주차 수를 정확히 맞추세요. "
             "title은 그 주에 실제로 다룰 내용 이름(15자 안팎), scope는 공부할 것을 구체적으로 한 문장으로 쓰세요. "
-            "마지막 주는 그동안 공부한 것을 발표하고 피드백받는 주입니다. 교안이 있으면 쪽 순서를 나눈 흐름을 따르세요.",
+            "모든 주는 공부하는 주입니다. 발표는 모든 주차를 마친 뒤 따로 하므로 어느 주에도 발표를 넣지 마세요. "
+            "교안이 있으면 쪽 순서를 나눈 흐름을 따르세요.",
             {"title": title, "goal": goal, "weeks": [{"week_no": n, "title": "", "scope": ""} for n in range(1, weeks + 1)],
              "pages": [{"page_no": n, "body": text[:500]} for n, text in pages[:30]]})
         return {w["week_no"]: w for w in result.get("weeks", []) if isinstance(w, dict) and isinstance(w.get("week_no"), int)}
@@ -191,8 +192,8 @@ async def create_study(
     plans = await first_plan(title, goal, weeks, pages)
     with connect() as db:
         cur = db.execute(
-            "INSERT INTO studies(title,goal,start_date,weeks,hours_per_week,member_count,rules,pdf_name,pdf_size,user_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO studies(title,goal,start_date,weeks,hours_per_week,member_count,rules,pdf_name,pdf_size,user_id,separate_presentation) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,1)",
             (title, goal, start_date.isoformat(), weeks, hours_per_week, member_count,
              rules.strip(), guard.clean_filename(pdf.filename) if pdf else "", size, user["id"]),
         )
@@ -202,7 +203,7 @@ async def create_study(
             first = min(page_count, math.ceil((number - 1) * page_count / weeks) + 1) if page_count else 1
             last = max(first, math.ceil(number * page_count / weeks)) if page_count else 0
             plan = plans.get(number, {})
-            week_title = str(plan.get("title") or ("발표" if number == weeks > 1 else f"{number}주차"))[:120]
+            week_title = str(plan.get("title") or f"{number}주차")[:120]
             # 교안이 있으면 쪽 범위를 지켜 근거 쪽을 정확히 고른다.
             scope = (f"{first}~{last}쪽" if pages and first <= last else str(plan.get("scope") or goal))[:300]
             meeting = start_date + timedelta(days=number * 7 - 1)

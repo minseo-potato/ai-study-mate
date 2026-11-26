@@ -405,16 +405,30 @@ def session_data(db, session_id):
     plan = loads(session.pop("plan"))
     session["more"] = session["status"] == "active" and bool(plan)
     session["next_speaker"] = plan[0]["member_no"] if session["more"] else None
-    session["presentation"] = session["kind"] == "study" and session["week_no"] == session["total_weeks"] > 1
+    # 발표는 모든 주차를 마친 뒤 따로 여는 대화(kind='presentation')다.
+    # 예전에 만든 스터디는 마지막 주 자체가 발표 주였으므로 그대로 둔다.
+    old_style = old_presentation_week(db, session["study_id"])
+    last_week = session["week_no"] == session["total_weeks"]
+    session["presentation"] = session["kind"] == "presentation" or (
+        session["kind"] == "study" and last_week and old_style and session["total_weeks"] > 1)
+    # 이번 주를 마치면 발표로 넘어가는지
+    session["presentation_next"] = session["kind"] == "study" and last_week and not old_style
+    session["label"] = "최종 발표" if session["kind"] == "presentation" else f"{session['week_no']}주차"
     following = db.execute("SELECT week_no,title,meeting_date FROM weeks WHERE study_id=? AND week_no=?",
                            (session["study_id"], session["week_no"] + 1)).fetchone()
-    session["next_week"] = dict(following) if following else None
+    session["next_week"] = dict(following) if following and session["kind"] != "presentation" else None
     session["evaluated"] = any(m["role"] == "evaluation" for m in session["messages"])
     # 예전에 '이름:'이 붙은 채 저장된 말도 화면과 프롬프트에서는 지워서 쓴다.
     for message in session["messages"]:
         if not message["role"].startswith("user"):
             message["body"] = clean_speech(message["body"], session["members"])
     return session
+
+
+def old_presentation_week(db, study_id: int) -> bool:
+    """예전 방식 스터디인지. 이 변경 전에 만든 스터디는 마지막 주 자체가 발표 주였고, 따로 발표 대화를 열지 않는다."""
+    row = db.execute("SELECT separate_presentation FROM studies WHERE id=?", (study_id,)).fetchone()
+    return bool(row) and not row["separate_presentation"]
 
 
 def source_pages(db, study_id, scope, note, week_no=None, total_weeks=None):

@@ -10,7 +10,7 @@ from auth import current_user
 import planner
 import scenes
 from db import connect, dumps, loads
-from common import add_file_message, build_qa, clean_speech, last_talk, peer_context, read_file, session_files, clean_list, learning_messages, qa_stats, required, session_data, source_pages, study_data, wants_no_questions
+from common import add_file_message, old_presentation_week, build_qa, clean_speech, last_talk, peer_context, read_file, session_files, clean_list, learning_messages, qa_stats, required, session_data, source_pages, study_data, wants_no_questions
 from routes.records import resolve_review
 
 
@@ -126,20 +126,30 @@ def get_session(session_id: int):
 
 
 def current_session(db, study_id: int, restart: bool = False) -> int:
-    """지금 이어 갈 대화의 번호. 스터디가 모두 끝났으면 마지막 대화를 그대로 보여 준다(restart면 마지막 주를 다시 시작)."""
+    """지금 이어 갈 대화의 번호.
+
+    주차가 남아 있으면 그 주의 대화, 모든 주차를 마쳤으면 따로 여는 최종 발표 대화를 돌려준다.
+    발표까지 끝났으면 마지막 대화를 그대로 보여 준다(restart면 발표나 마지막 주를 다시 시작)."""
     week = db.execute("SELECT week_no FROM weeks WHERE study_id=? AND status!='complete' ORDER BY week_no LIMIT 1",
                       (study_id,)).fetchone()
-    active = db.execute("SELECT id FROM sessions WHERE study_id=? AND status='active' AND (week_no=? OR kind='review') "
-                        "ORDER BY kind='review' DESC,id LIMIT 1", (study_id, week["week_no"] if week else -1)).fetchone()
+    active = db.execute("SELECT id FROM sessions WHERE study_id=? AND status='active' "
+                        "AND (week_no=? OR kind='review' OR (kind='presentation' AND ?)) "
+                        "ORDER BY kind='review' DESC,id LIMIT 1",
+                        (study_id, week["week_no"] if week else -1, week is None)).fetchone()
     if active:
         return active["id"]
-    if week is None and not restart:
-        last = db.execute("SELECT id FROM sessions WHERE study_id=? AND kind!='review' ORDER BY id DESC LIMIT 1",
+    last_no = required(db, "SELECT MAX(week_no) AS week_no FROM weeks WHERE study_id=?", (study_id,))["week_no"]
+    if week is None:
+        last = db.execute("SELECT id,kind FROM sessions WHERE study_id=? AND kind!='review' ORDER BY id DESC LIMIT 1",
                           (study_id,)).fetchone()
-        if last:
+        presented = db.execute("SELECT 1 FROM sessions WHERE study_id=? AND kind='presentation'", (study_id,)).fetchone()
+        # 모든 주차를 마쳤고 아직 발표를 안 했으면(또는 발표를 다시 하면) 발표 대화를 연다.
+        if not old_presentation_week(db, study_id) and (not presented or (restart and last and last["kind"] == "presentation")):
+            return db.execute("INSERT INTO sessions(study_id,week_no,initial_note,kind) VALUES(?,?,'','presentation')",
+                              (study_id, last_no)).lastrowid
+        if last and not restart:
             return last["id"]
-    week_no = week["week_no"] if week else required(
-        db, "SELECT MAX(week_no) AS week_no FROM weeks WHERE study_id=?", (study_id,))["week_no"]
+    week_no = week["week_no"] if week else last_no
     first = not db.execute("SELECT 1 FROM sessions WHERE study_id=?", (study_id,)).fetchone()
     session_id = db.execute("INSERT INTO sessions(study_id,week_no,initial_note) VALUES(?,?,'')",
                             (study_id, week_no)).lastrowid
@@ -242,7 +252,7 @@ CRITERIA = ("개념 이해", "설명 구성", "근거와 예시", "내용 연결
 
 @router.post("/sessions/{session_id}/evaluate")
 async def evaluate(session_id: int):
-    """마지막 주차 발표(채팅과 첨부 파일)에 대해 스터디원별 피드백과 평가를 남긴다."""
+    """모든 주차를 마친 뒤 하는 최종 발표(채팅과 첨부 파일)에 대해 스터디원별 피드백과 평가를 남긴다."""
     with connect() as db:
         session = session_data(db, session_id)
         if session["status"] != "active" or not session["presentation"] or session["evaluated"]:
@@ -265,14 +275,14 @@ async def evaluate(session_id: int):
         try:
             said = await agents.speak(
                 study, member, [],
-                "발표 소감: 상대가 마지막 주 발표를 마쳤다. 발표한 말과 올린 파일에 실제로 나온 내용을 짚어 좋았던 점과 고치면 좋을 점을 두세 문장으로 말한다. 묻지 않는다.", material)
+                "발표 소감: 상대가 모든 주차를 마치고 최종 발표를 끝냈다. 발표한 말과 올린 파일에 실제로 나온 내용을 짚어 좋았던 점과 고치면 좋을 점을 두세 문장으로 말한다. 묻지 않는다.", material)
         except HTTPException:
             return None
         return {"member_no": member["member_no"], "text": said.get("text")}
 
     result, *comments = await asyncio.gather(ai.generate_json(
         "당신은 발표를 공정하게 평가합니다. 모든 글은 '~해요'체 한국어로 쓰세요. "
-        "발표 평가: 스터디 마지막 주에 사용자가 발표했습니다. presentation은 채팅으로 발표한 말, attached_files는 발표 자료입니다. "
+        "발표 평가: 스터디의 모든 주차를 마친 뒤 사용자가 최종 발표를 했습니다. presentation은 채팅으로 발표한 말, attached_files는 발표 자료입니다. "
         "이번에는 평가가 목적이므로 구체적으로 짚어 주세요. 발표에 실제로 나온 내용만 근거로 삼고, 과장된 칭찬을 하지 마세요. "
         "JSON 키는 scores,summary,strengths,improvements입니다. "
         f"scores: {', '.join(CRITERIA)} 네 항목을 이 순서로 평가합니다. 항목은 label,score(1~5 정수),reason(발표 내용을 근거로 한 문장)입니다. "
@@ -379,7 +389,7 @@ async def next_question(session_id: int):
     if session["presentation"]:
         opening = await agents.speak(
             study, member, session["messages"],
-            "발표 열기: 오늘은 마지막 주, 상대가 그동안 공부한 것을 발표하는 날이다. 편하게 시작하도록 청하고, 파일을 올리거나 채팅으로 쭉 말해도 된다고 알려 준다. "
+            "발표 열기: 모든 주차 공부를 마치고 따로 모인 최종 발표 시간이다. 상대가 그동안 공부한 것을 발표한다. 편하게 시작하도록 청하고, 파일을 올리거나 채팅으로 쭉 말해도 된다고 알려 준다. "
             "공부 내용은 묻지 않는다.", {})
         text = agents.line(opening, study["members"], "text", "message", limit=500)
         if not text:
@@ -632,6 +642,8 @@ async def finish(session_id: int, body: Finish):
             return session_data(db, session_id)
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
+        if session["kind"] == "presentation":
+            week = {**week, "title": "최종 발표", "scope": "모든 주차에서 공부한 내용"}
         files = session_files(db, session_id)
         talk = learning_messages(session["messages"])
         last_user_note = next((m["body"] for m in reversed(talk) if m["role"] == "user"), "")

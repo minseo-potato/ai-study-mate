@@ -311,7 +311,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual([w["state"] for w in info["weeks"]], ["끝남", "지금", "아직 안 함"])
             self.assertEqual((info["current_week"]["week_no"], info["total_weeks"]), (2, 3))
             self.assertIn("손실 함수", info["weeks"][0]["what_we_did"]["summary"])
-            self.assertTrue(info["weeks"][2]["presentation"])
+            self.assertNotIn("presentation", info["weeks"][2])
             self.assertIsNone(info["material"])
 
     def test_roles_and_levels_shape_the_talk(self):
@@ -602,6 +602,25 @@ class FlowTest(unittest.TestCase):
         self.assertFalse(guard.off_study("프롬프트 인젝션이 뭐야?", "AI 보안 프롬프트 인젝션 방어"))
         self.assertFalse(guard.off_study("모델이 왜 틀리는 거야? 너는 어떻게 봐?", "머신러닝 모델 기초"))
 
+    def test_old_studies_keep_last_week_presentation(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+            client = make_client()
+            study = client.post("/studies", data={"title": "정렬", "weeks": "2", "member_count": "2"}).json()
+            self.assertEqual([w["title"] for w in study["weeks"]], ["1주차", "2주차"])
+            # 이 변경 전에 만든 스터디처럼 둔다.
+            from db import connect
+            with connect() as db:
+                db.execute("UPDATE studies SET separate_presentation=0 WHERE id=?", (study["id"],))
+            one = client.post(f"/studies/{study['id']}/room").json()["session"]
+            self.assertFalse(one["presentation_next"])
+            client.post(f"/sessions/{one['id']}/finish", json={})
+            two = client.post(f"/studies/{study['id']}/room").json()["session"]
+            self.assertEqual((two["week_no"], two["kind"], two["presentation"]), (2, "study", True))
+            client.post(f"/sessions/{two['id']}/finish", json={})
+            # 발표 주를 마쳤으면 따로 발표 대화를 또 열지 않는다.
+            self.assertEqual(client.post(f"/studies/{study['id']}/room").json()["session"]["id"], two["id"])
+
     def test_several_materials_and_friend_notes(self):
         import agents
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
@@ -725,7 +744,7 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(again.status_code, 200, again.text)
             self.assertEqual(again.json()["messages"][-1]["role"], "assistant_comment")
 
-    def test_last_week_presentation_files_and_review_chat(self):
+    def test_presentation_after_all_weeks_files_and_review_chat(self):
         seen = {}
 
         async def present_ai(instructions, payload):
@@ -773,8 +792,16 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(client.post(f"/sessions/{one}/evaluate").status_code, 409)
             self.assertEqual(client.post(f"/sessions/{one}/finish", json={}).status_code, 200)
 
+            # 마지막 주도 평소처럼 공부하는 주이고, 마치면 발표로 넘어간다.
+            last = client.post(f"/studies/{sid}/room").json()["session"]
+            self.assertEqual((last["week_no"], last["kind"], last["presentation"], last["presentation_next"]), (2, "study", False, True))
+            self.assertIsNone(last["next_week"])
+            self.assertEqual(client.post(f"/sessions/{last['id']}/evaluate").status_code, 409)
+            self.assertEqual(client.post(f"/sessions/{last['id']}/finish", json={}).status_code, 200)
+
             two = client.post(f"/studies/{sid}/room").json()["session"]
-            self.assertTrue(two["presentation"])
+            self.assertEqual((two["kind"], two["presentation"], two["presentation_next"], two["label"]),
+                             ("presentation", True, False, "최종 발표"))
             self.assertIsNone(two["next_week"])
             two = two["id"]
             opened = client.post(f"/sessions/{two}/question").json()
@@ -801,9 +828,15 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(client.post(f"/studies/{sid}/room").json()["session"]["id"], two)
             records = client.get("/me/records").json()
             self.assertEqual(records["studies"][0]["completed"], 2)
-            self.assertEqual([w["evaluated"] for w in records["weeks"]], [False, True])
+            self.assertEqual([(w["title"] if w["kind"] == "presentation" else w["week_no"], w["evaluated"]) for w in records["weeks"]],
+                             [(1, False), (2, False), ("최종 발표", True)])
             report = client.get(f"/studies/{sid}/learning-report").json()
-            self.assertEqual(report["weeks"][1]["evaluation"]["summary"], "순서대로 설명했다.")
+            self.assertEqual(report["weeks"][-1]["evaluation"]["summary"], "순서대로 설명했다.")
+            # 발표를 다시 하면 새 발표 대화가 열린다.
+            again = client.post(f"/studies/{sid}/room?restart=true").json()["session"]
+            self.assertEqual((again["kind"], again["status"]), ("presentation", "active"))
+            self.assertNotEqual(again["id"], two)
+            client.post(f"/sessions/{again['id']}/finish", json={})
 
             review = records["reviews"][0]
             chat = client.post(f"/studies/{sid}/reviews/{review['id']}/chat").json()["session"]

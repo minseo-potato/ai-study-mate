@@ -53,7 +53,7 @@ class _RecordsPageState extends State<RecordsPage> {
       child: Row(children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Text('${w['week_no']}주차', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
+            Text(w['kind'] == 'presentation' ? '발표' : '${w['week_no']}주차', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
             const SizedBox(width: 8),
             Expanded(child: Text('${w['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
