@@ -108,15 +108,18 @@ class ProfileEdit {
   final String name;
   final AvatarSpec avatar;
   final String? level;
-  const ProfileEdit(this.name, this.avatar, this.level);
+  final String? note;
+  const ProfileEdit(this.name, this.avatar, this.level, [this.note]);
 }
 
-/// 이름·프로필 모양(·학습 단계)을 한 시트에서 고친다. 취소하면 null.
+/// 이름·프로필 모양(·학습 단계·성격 조정)을 한 시트에서 고친다. 취소하면 null.
+/// note를 넘기면 AI 친구의 성격·말투를 살짝 바꾸는 입력칸이 나온다.
 Future<ProfileEdit?> showProfileEditor(BuildContext context, {
   required String title, required String name, required AvatarSpec avatar,
-  int nameMax = 20, int nameMin = 1, String? subtitle, String? level,
+  int nameMax = 20, int nameMin = 1, String? subtitle, String? level, String? note,
 }) async {
   final controller = TextEditingController(text: name);
+  final noteController = note == null ? null : TextEditingController(text: note);
   var spec = avatar;
   var chosenLevel = level;
   final result = await showAdaptiveSheet<ProfileEdit>(context, (sheetContext) => StatefulBuilder(
@@ -139,6 +142,15 @@ Future<ProfileEdit?> showProfileEditor(BuildContext context, {
             const SizedBox(height: 8),
             LevelPicker(value: chosenLevel!, onChanged: (v) => setSheet(() => chosenLevel = v)),
           ],
+          if (noteController != null) ...[
+            const SizedBox(height: 18),
+            const Text('성격·말투 조정', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: subInk)),
+            const SizedBox(height: 8),
+            TextField(controller: noteController, maxLength: 150, minLines: 2, maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: '예: 예시를 더 자주 들어 줘, 말을 조금 더 짧게, 리액션을 크게',
+                helperText: '비워 두면 기본 성격대로 말해요.')),
+          ],
           const SizedBox(height: 18),
           const Text('프로필', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: subInk)),
           const SizedBox(height: 10),
@@ -147,10 +159,15 @@ Future<ProfileEdit?> showProfileEditor(BuildContext context, {
         // 저장 버튼은 내용이 길어도 항상 보이도록 스크롤 밖에 둔다.
         const SizedBox(height: 16),
         FilledButton(onPressed: valid
-          ? () => Navigator.pop(sheetContext, ProfileEdit(controller.text.trim(), spec, chosenLevel)) : null,
+          ? () => Navigator.pop(sheetContext,
+              ProfileEdit(controller.text.trim(), spec, chosenLevel, noteController?.text.trim())) : null,
           child: const Text('저장')),
       ]);
     }));
-  controller.dispose();
+  // 시트가 닫히는 애니메이션 동안 입력칸이 아직 컨트롤러를 쓰므로, 다 닫힌 뒤에 정리한다.
+  Future<void>.delayed(const Duration(milliseconds: 600), () {
+    controller.dispose();
+    noteController?.dispose();
+  });
   return result;
 }

@@ -30,6 +30,8 @@ flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8000
 
 Android 에뮬레이터에서는 `flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000`을 사용합니다. 포함된 Android manifest는 로컬 시연을 위한 인터넷 권한과 HTTP 연결 설정을 담고 있습니다. 배포할 때는 HTTPS 주소를 사용하세요.
 
+`API_BASE_URL`을 정하지 않고 빌드하면, 배포된 웹에서는 같은 도메인의 `/api`(예: `https://내도메인/api`)를, 내 컴퓨터(localhost)에서는 `http://localhost:8000`을 자동으로 씁니다. API 서버가 다른 주소에 있으면 `flutter build web --dart-define=API_BASE_URL=https://api.내도메인`처럼 정해 주세요.
+
 Swagger 문서는 서버를 켠 뒤 `http://127.0.0.1:8000/docs`에서 확인할 수 있습니다.
 
 백엔드 통합 시험은 `backend`에서 `pip install -r requirements-dev.txt` 후 `python -m unittest test_flow.py`로 실행합니다. AI 응답은 시험에서 가짜 응답으로 대체하므로 API 키가 필요하지 않습니다.

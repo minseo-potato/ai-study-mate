@@ -111,6 +111,9 @@ def migrate(db):
         db.execute("ALTER TABLE sessions ADD COLUMN plan TEXT NOT NULL DEFAULT '[]'")
     if "pdf_size" not in study_columns:
         db.execute("ALTER TABLE studies ADD COLUMN pdf_size INTEGER NOT NULL DEFAULT 0")
+    # 사용자가 친구마다 적어 둔 성격·말투 조정 한두 줄
+    if "note" not in {row["name"] for row in db.execute("PRAGMA table_info(members)")}:
+        db.execute("ALTER TABLE members ADD COLUMN note TEXT NOT NULL DEFAULT ''")
     week_columns = {row["name"] for row in db.execute("PRAGMA table_info(weeks)")}
     if "progress_percent" not in week_columns:
         db.execute("ALTER TABLE weeks ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")

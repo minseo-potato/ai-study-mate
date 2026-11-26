@@ -89,7 +89,7 @@ async def _request(instructions: str, payload: dict) -> dict:
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
-                "https://api.openai.com/v1/responses",
+                os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/responses",
                 headers={"Authorization": f"Bearer {key}"},
                 json=body,
             )

@@ -74,6 +74,49 @@ def edit_study_details(study_id: int, body: StudyDetails):
         return study_data(db, study_id)
 
 
+MAX_PAGES = 3000
+NOTE_MAX = 150
+
+
+def clean_note(text) -> str:
+    """친구 성격·말투 조정. 공부 친구의 모습을 바꾸는 말만 받는다."""
+    note = guard.clean_label(text, NOTE_MAX)
+    if note and guard.is_trick(note):
+        raise HTTPException(400, "친구의 성격이나 말투만 적어 주세요.")
+    return note
+
+
+def spread_pages(db, study: dict, page_count: int, had_pages: bool):
+    """주차 범위를 교안 쪽수에 맞춰 다시 나눈다. 사용자가 직접 바꾼 범위는 그대로 둔다."""
+    for week in db.execute("SELECT week_no,scope FROM weeks WHERE study_id=? AND status!='complete'", (study["id"],)):
+        if had_pages and not re.fullmatch(r"\d+\s*[~\-]\s*\d+\s*쪽", week["scope"]):
+            continue
+        first = min(page_count, math.ceil((week["week_no"] - 1) * page_count / study["weeks"]) + 1)
+        last = max(first, math.ceil(week["week_no"] * page_count / study["weeks"]))
+        db.execute("UPDATE weeks SET scope=? WHERE study_id=? AND week_no=?",
+                   (f"{first}~{last}쪽", study["id"], week["week_no"]))
+
+
+@router.post("/studies/{study_id}/pdf")
+async def add_pdf(study_id: int, pdf: UploadFile = File(...)):
+    """교안 파일을 하나 더 붙인다. 새 쪽은 지금 교안 뒤에 이어 붙는다."""
+    pages, size = await read_file(pdf)
+    name = guard.clean_filename(pdf.filename)
+    with connect() as db:
+        study = required(db, "SELECT * FROM studies WHERE id=?", (study_id,))
+        start = db.execute("SELECT COALESCE(MAX(page_no),0) FROM pages WHERE study_id=?", (study_id,)).fetchone()[0]
+        if start + len(pages) > MAX_PAGES:
+            raise HTTPException(400, f"교안은 모두 합쳐 {MAX_PAGES}쪽까지 올릴 수 있어요.")
+        db.executemany("INSERT INTO pages VALUES(?,?,?)", [(study_id, start + n, text) for n, text in pages])
+        names = f"{study['pdf_name']}, {name}" if study["pdf_name"] else name
+        db.execute("UPDATE studies SET pdf_name=?,pdf_size=pdf_size+? WHERE id=?", (names[:400], size, study_id))
+        active = db.execute("SELECT id FROM sessions WHERE study_id=? AND status='active' ORDER BY id DESC LIMIT 1", (study_id,)).fetchone()
+        if active:
+            add_file_message(db, study_id, active["id"], name, size, pages)
+        spread_pages(db, study, start + len(pages), bool(study["pdf_name"]))
+        return study_data(db, study_id)
+
+
 @router.put("/studies/{study_id}/pdf")
 async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
     pages, size = await read_file(pdf)
@@ -89,13 +132,7 @@ async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
         active = db.execute("SELECT id FROM sessions WHERE study_id=? AND status='active' ORDER BY id DESC LIMIT 1", (study_id,)).fetchone()
         if active:
             add_file_message(db, study_id, active["id"], guard.clean_filename(pdf.filename), size, pages)
-        for week in db.execute("SELECT week_no,scope FROM weeks WHERE study_id=? AND status!='complete'", (study_id,)):
-            if study["pdf_name"] and not re.fullmatch(r"\d+\s*[~\-]\s*\d+\s*쪽", week["scope"]):
-                continue
-            first = min(len(pages), math.ceil((week["week_no"] - 1) * len(pages) / study["weeks"]) + 1)
-            last = max(first, math.ceil(week["week_no"] * len(pages) / study["weeks"]))
-            db.execute("UPDATE weeks SET scope=? WHERE study_id=? AND week_no=?",
-                       (f"{first}~{last}쪽", study_id, week["week_no"]))
+        spread_pages(db, study, len(pages), bool(study["pdf_name"]))
         return study_data(db, study_id)
 
 
@@ -143,10 +180,12 @@ async def create_study(
         not isinstance(p, dict) or p.get("level") not in LEVELS or
         not isinstance(p.get("understanding", ""), str) or len(p.get("understanding", "")) > 500 or
         not isinstance(p.get("name", ""), str) or len(p.get("name", "").strip()) > 12 or
-        p.get("role", 0) not in range(len(PERSPECTIVES))
+        p.get("role", 0) not in range(len(PERSPECTIVES)) or
+        not isinstance(p.get("note", ""), str) or len(p.get("note", "")) > NOTE_MAX
         for p in profiles
     )):
         raise HTTPException(400, "AI 스터디원 이름(12자 이하)과 학습 단계를 확인해 주세요.")
+    notes = [clean_note(p.get("note", "")) for p in profiles]
     pages, size = await read_file(pdf) if pdf is not None else ([], 0)
     page_count = len(pages)
     plans = await first_plan(title, goal, weeks, pages)
@@ -175,11 +214,12 @@ async def create_study(
             avatar = str(profile.get("avatar") or "")
             if not re.match(AVATAR_PATTERN, avatar):
                 avatar = ""
-            db.execute("INSERT INTO members(study_id,member_no,name,perspective,level,understanding,avatar) "
-                       "VALUES(?,?,?,?,?,?,?)",
+            db.execute("INSERT INTO members(study_id,member_no,name,perspective,level,understanding,avatar,note) "
+                       "VALUES(?,?,?,?,?,?,?,?)",
                        (study_id, number, guard.clean_label(profile.get("name", ""), 12) or PEER_NAMES[role], PERSPECTIVES[role],
                         profile.get("level", LEVELS[role]),
-                        (profile.get("understanding") or INITIAL_UNDERSTANDING[role]).strip(), avatar))
+                        (profile.get("understanding") or INITIAL_UNDERSTANDING[role]).strip(), avatar,
+                        notes[number - 1] if profiles else ""))
         return study_data(db, study_id)
 
 
@@ -200,6 +240,7 @@ class MemberEdit(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=12)
     level: str | None = None
     avatar: str | None = Field(default=None, pattern=AVATAR_PATTERN)
+    note: str | None = Field(default=None, max_length=NOTE_MAX)
 
 
 @router.put("/studies/{study_id}/members/{member_no}")
@@ -214,8 +255,9 @@ def edit_member(study_id: int, member_no: int, body: MemberEdit):
         if level not in MEMBER_LEVELS:
             raise HTTPException(400, "학습 단계는 기초, 중급, 심화 중 하나예요.")
         avatar = member["avatar"] if body.avatar is None else body.avatar
-        db.execute("UPDATE members SET name=?,level=?,avatar=? WHERE study_id=? AND member_no=?",
-                   (name, level, avatar, study_id, member_no))
+        note = member["note"] if body.note is None else clean_note(body.note)
+        db.execute("UPDATE members SET name=?,level=?,avatar=?,note=? WHERE study_id=? AND member_no=?",
+                   (name, level, avatar, note, study_id, member_no))
         return study_data(db, study_id)
 
 

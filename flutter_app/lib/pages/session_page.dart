@@ -258,21 +258,28 @@ class _SessionPageState extends State<SessionPage> {
       ]));
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
-  /// 교안을 추가하거나 바꾼다.
+  /// 교안을 추가하거나 바꾼다. 여러 파일을 한 번에 고르면 차례로 이어 붙인다.
   Future<void> attachPdf() async {
-    final files = await pickFiles(context, multiple: false);
+    final files = await pickFiles(context);
     if (files.isEmpty || !mounted) return;
+    var replace = false;
     if ((session?['pdf_name'] as String? ?? '').isNotEmpty) {
-      final replace = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
-        title: const Text('교안을 바꿀까요?'),
-        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('교체'))],
+      final choice = await showDialog<String>(context: context, builder: (dialogContext) => AlertDialog(
+        title: Text(files.length > 1 ? '교안 ${files.length}개를 어떻게 올릴까요?' : '교안을 어떻게 올릴까요?'),
+        content: const Text('추가하면 지금 교안 뒤에 이어 붙이고, 교체하면 지금 교안을 바꿔요.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, 'replace'), child: const Text('교체')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, 'add'), child: const Text('추가'))],
       ));
-      if (replace != true || !mounted) return;
+      if (choice == null || !mounted) return;
+      replace = choice == 'replace';
     }
     setState(() => busy = true);
     try {
-      await Api.uploadPdf(session!['study_id'] as int, files.first);
+      final studyId = session!['study_id'] as int;
+      for (var i = 0; i < files.length; i++) {
+        await (replace && i == 0 ? Api.uploadPdf(studyId, files[i]) : Api.addPdf(studyId, files[i]));
+      }
       if (mounted) { setState(() => busy = false); await refresh(); }
     } catch (e) { if (mounted) errorMessage(context, e); }
     finally { if (mounted) setState(() => busy = false); }
@@ -299,11 +306,12 @@ class _SessionPageState extends State<SessionPage> {
     final role = peerRole(member);
     final edit = await showProfileEditor(context, title: memberName(member),
       subtitle: peerRoleLabels[role],
-      name: memberName(member), avatar: memberAvatar(member), nameMax: 12, level: '${member['level']}');
+      name: memberName(member), avatar: memberAvatar(member), nameMax: 12, level: '${member['level']}',
+      note: '${member['note'] ?? ''}');
     if (edit == null || !mounted) return;
     try {
       await Api.request('PUT', '/studies/${session!['study_id']}/members/${member['member_no']}',
-        {'name': edit.name, 'level': edit.level, 'avatar': edit.avatar.code});
+        {'name': edit.name, 'level': edit.level, 'avatar': edit.avatar.code, 'note': edit.note ?? ''});
       await refresh();
     } catch (e) { if (mounted) errorMessage(context, e); }
   }
@@ -510,7 +518,7 @@ class _SessionPageState extends State<SessionPage> {
                 const SizedBox(width: 10),
                 Expanded(child: Text(hasPdf ? '${s['pdf_name']} · ${s['page_count']}쪽' : '교안 추가',
                   maxLines: 1, overflow: TextOverflow.ellipsis)),
-                Text(hasPdf ? '교체' : '추가', style: const TextStyle(color: brand, fontWeight: FontWeight.w600, fontSize: 13)),
+                Text(hasPdf ? '추가·교체' : '추가', style: const TextStyle(color: brand, fontWeight: FontWeight.w600, fontSize: 13)),
               ]))),
         ]),
         if (review.isNotEmpty) InfoSection(title: '복습할 내용', children: [

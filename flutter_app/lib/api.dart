@@ -1,9 +1,21 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/files.dart';
 
-const apiBase = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
+/// 서버 주소. 빌드할 때 --dart-define=API_BASE_URL=...로 정한다.
+/// 정하지 않았으면, 배포된 웹에서는 같은 도메인의 /api를, 내 컴퓨터에서는 localhost:8000을 쓴다.
+const _apiBaseSetting = String.fromEnvironment('API_BASE_URL');
+final apiBase = _apiBaseSetting.isNotEmpty ? _apiBaseSetting.replaceFirst(RegExp(r'/+$'), '') : _defaultApiBase();
+
+String _defaultApiBase() {
+  const local = 'http://localhost:8000';
+  if (!kIsWeb) return local;
+  final host = Uri.base.host;
+  final onMyComputer = host.isEmpty || host == 'localhost' || host == '127.0.0.1' || host == '[::1]';
+  return onMyComputer ? local : '${Uri.base.origin}/api';
+}
 
 /// 로그인이 풀렸을 때(서버가 401을 돌려줄 때) 던지는 오류.
 class SignedOut implements Exception {
@@ -51,6 +63,10 @@ class Api {
 
   static Future<dynamic> uploadPdf(int studyId, PickedFile file) =>
     _send(http.MultipartRequest('PUT', url('/studies/$studyId/pdf'))..files.add(_filePart('pdf', file)));
+
+  /// 교안 파일을 하나 더 붙인다. 새 쪽은 지금 교안 뒤에 이어진다.
+  static Future<dynamic> addPdf(int studyId, PickedFile file) =>
+    _send(http.MultipartRequest('POST', url('/studies/$studyId/pdf'))..files.add(_filePart('pdf', file)));
 
   static Future<dynamic> attachFile(int sessionId, PickedFile file) =>
     _send(http.MultipartRequest('POST', url('/sessions/$sessionId/files'))..files.add(_filePart('file', file)));

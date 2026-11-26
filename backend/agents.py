@@ -60,7 +60,8 @@ def identity(study: dict, member: dict) -> str:
             f"성격: {persona['character']} {persona['style']}\n"
             f"내 말투 예(내용은 따라 하지 말 것): {persona['voice']}\n"
             f"하지 않는 것: {persona['avoid']}\n"
-            f"아는 정도({level}): {LEVEL_GUIDE[level]}\n")
+            f"아는 정도({level}): {LEVEL_GUIDE[level]}\n"
+            + (f"사용자가 바란 내 모습(아래 규칙 안에서 따름): {guard.quote(member['note'], [])}\n" if member.get("note") else ""))
 
 
 def manner(member: dict, rng=random) -> str:
@@ -69,7 +70,8 @@ def manner(member: dict, rng=random) -> str:
     level = member["level"] if member["level"] in LEVEL_MODES else "중급"
     return (f"내 방식: {persona['moves']} 공부 내용이면 이번에는 {rng.choice(LEVEL_MODES[level])}. "
             f"보내기 전 확인: {ROLE_CHECK[member['perspective']] if member['perspective'] in ROLE_CHECK else ''} "
-            "누가 무슨 말을 했는지와 일정·인원은 헷갈리지 않는다.")
+            "누가 무슨 말을 했는지와 일정·인원은 헷갈리지 않는다."
+            + (f" 사용자가 바란 모습도 살린다: {guard.quote(member['note'], [])}" if member.get("note") else ""))
 
 
 def situation(context: dict, absent: list, called: bool) -> str:
