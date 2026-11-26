@@ -2,6 +2,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="SemiTalk"
+        android:icon="@mipmap/ic_launcher"
         android:name="${applicationName}"
         android:allowBackup="false">
         <activity
