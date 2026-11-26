@@ -166,19 +166,30 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
 
     def say(casual: str, formal: str) -> str:
         return formal if polite else casual
-    target = int(cmd.get("week_no") or current_week)
-    target = max(1, min(total, target))
+    try:
+        target = current_week if cmd.get("week_no") is None else int(cmd["week_no"])
+    except (TypeError, ValueError):
+        target = current_week
+    if not 1 <= target <= total:
+        return say(f"{target}주차는 없어. 우리 {total}주까지야.", f"{target}주차는 없어요. 이 스터디는 {total}주까지예요.")
 
     if intent in ("reschedule", "set_date"):
         week = weeks[target - 1]
         old = date.fromisoformat(week["meeting_date"])
-        if intent == "set_date":
-            new = date(old.year, int(cmd["month"]), int(cmd["day"]))
-            if new < old - timedelta(days=180):
-                new = new.replace(year=new.year + 1)
-            delta = (new - old).days
-        else:
-            delta = int(cmd.get("days") or 7)
+        try:
+            if intent == "set_date":
+                new = date(old.year, int(cmd["month"]), int(cmd["day"]))
+                if new < old - timedelta(days=180):
+                    new = new.replace(year=new.year + 1)
+                delta = (new - old).days
+            else:
+                delta = int(cmd.get("days") or 7)
+        except (KeyError, TypeError, ValueError):
+            return say("그런 날짜는 없는데? 몇 월 며칠인지 다시 말해 줘.", "그런 날짜는 없어요. 몇 월 며칠인지 다시 알려 주세요.")
+        if abs(delta) > 180:
+            return say("일정은 한 번에 반년 안에서만 옮길 수 있어.", "일정은 한 번에 반년 안에서만 옮길 수 있어요.")
+        if old + timedelta(days=delta) < date.today() - timedelta(days=1):
+            return say("지난 날짜로는 못 옮겨. 다른 날로 말해 줘.", "지난 날짜로는 옮길 수 없어요.")
         if delta == 0:
             return say(f"{target}주차 모임 이미 {_fmt(week['meeting_date'])}이야.", f"{target}주차 모임은 이미 {_fmt(week['meeting_date'])}이에요.")
         moved = [w for w in weeks if w["week_no"] >= target and w["status"] != "complete"]
@@ -192,22 +203,28 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
                    f"좋아요! {target}주차 모임을 {_fmt(new_date)}로 {verb}요." + (tail + "요." if tail else ""))
 
     if intent == "change_week":
-        title = str(cmd.get("title") or "").strip()[:120]
-        scope = str(cmd.get("scope") or title).strip()[:500]
-        if not title:
+        title = guard.clean_label(cmd.get("title"), 120)
+        scope = guard.clean_label(cmd.get("scope") or title, 500)
+        if not title or guard.is_trick(title) or guard.is_trick(scope):
             return say("어떤 내용으로 바꿀지 한 번만 더 말해 줘.", "어떤 내용으로 바꿀지 한 번만 더 알려 주세요.")
         db.execute("UPDATE weeks SET title=?,scope=? WHERE study_id=? AND week_no=?", (title, scope, sid, target))
         return say(f"알겠어, {target}주차는 '{title}'(으)로 바꿔 둘게.", f"알겠어요. {target}주차는 '{title}'(으)로 바꿔 둘게요.")
 
     if intent == "hours":
-        hours = float(cmd.get("hours") or 0)
+        try:
+            hours = float(cmd.get("hours") or 0)
+        except (TypeError, ValueError):
+            hours = 0
         if not 0.5 <= hours <= 80:
             return say("주당 시간은 0.5~80시간 사이로 정해 줘.", "주당 시간은 0.5~80시간 사이로 정해 주세요.")
         db.execute("UPDATE studies SET hours_per_week=? WHERE id=?", (hours, sid))
         return say(f"좋아, 이제 주당 {hours:g}시간 기준으로 하자.", f"좋아요, 앞으로 주당 {hours:g}시간 기준으로 진행할게요.")
 
     if intent == "add_weeks":
-        add = int(cmd.get("add_weeks") or 1)
+        try:
+            add = int(cmd.get("add_weeks") or 1)
+        except (TypeError, ValueError):
+            add = 0
         if not 1 <= add or total + add > 26:
             return say("스터디는 26주까지만 늘릴 수 있어.", "스터디 기간은 최대 26주까지만 늘릴 수 있어요.")
         last = date.fromisoformat(weeks[-1]["meeting_date"])

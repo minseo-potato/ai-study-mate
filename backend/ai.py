@@ -82,6 +82,10 @@ async def _request(instructions: str, payload: dict) -> dict:
         "input": build_input(payload),
         "store": False,
     }
+    # 생각을 얼마나 깊게 할지 (none, low, medium, high, xhigh, max). 비워 두면 모델 기본값(medium)을 쓴다.
+    effort = os.getenv("OPENAI_REASONING_EFFORT", "").strip().lower()
+    if effort in {"none", "low", "medium", "high", "xhigh", "max"}:
+        body["reasoning"] = {"effort": effort}
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(

@@ -4,13 +4,13 @@ import 'pages/home_shell.dart';
 import 'pages/login_page.dart';
 import 'theme.dart';
 
-void main() => runApp(const StudyMateApp());
+void main() => runApp(const SemiTalkApp());
 
-class StudyMateApp extends StatelessWidget {
-  const StudyMateApp({super.key});
+class SemiTalkApp extends StatelessWidget {
+  const SemiTalkApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'AI 스터디메이트',
+    title: 'SemiTalk',
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       useMaterial3: true,

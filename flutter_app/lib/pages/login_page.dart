@@ -39,7 +39,7 @@ class _LoginPageState extends State<LoginPage> {
             decoration: BoxDecoration(color: brand, borderRadius: BorderRadius.circular(20)),
             child: const Icon(Icons.forum_rounded, color: Colors.white, size: 32))),
           const SizedBox(height: 20),
-          const Text('AI 스터디메이트', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: ink)),
+          const Text('SemiTalk', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: ink)),
           const SizedBox(height: 6),
           Text(signup ? '이름과 비밀번호만 정하면 바로 시작해요' : 'AI 친구들과 함께 공부해요',
             style: const TextStyle(fontSize: 15, color: subInk)),

@@ -1,5 +1,5 @@
 name: ai_study_mate
-description: AI 스터디메이트 학술제 시연 앱
+description: SemiTalk(세미 토크) 학술제 시연 앱
 publish_to: none
 version: 1.0.0+1
 environment:

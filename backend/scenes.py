@@ -31,7 +31,16 @@ def names_in(text: str, members: list) -> tuple[list, list]:
         call = (rf"@{name}|{name}(?:아|야|이여|님|씨)(?![가-힣])|{name}이?(?:는|은|도)(?![가-힣])|{name}(?:이)?(?:한테|에게)(?![가-힣])"
                 rf"|^\s*{name}(?=[\s,.!?~:]|$)")
         (called if re.search(call, text) else mentioned).append(m["member_no"])
-    return called, mentioned
+    # 함께 부른 친구('서윤이랑 지호는', '서윤, 도현아')도 부른 것으로 본다.
+    if called:
+        for m in members:
+            name = re.escape(str(m["name"]).strip())
+            if m["member_no"] in mentioned and name and re.search(rf"{name}(?:이)?\s*(?:랑|이랑|하고|와|과|,|및)\s*", text):
+                mentioned.remove(m["member_no"])
+                called.append(m["member_no"])
+    # 말에 나온 순서대로 답하게 한다.
+    where = {m["member_no"]: text.find(str(m["name"]).strip()) for m in members}
+    return sorted(called, key=where.get), sorted(mentioned, key=where.get)
 
 
 _NOT_NAMES = {"있잖", "맞잖", "그렇잖", "근데", "진짜", "그거", "이거", "저거", "뭐", "이게", "그게", "얘들", "애들", "친구들", "너희들", "자기", "여러분",
@@ -131,7 +140,8 @@ def choose_turn(talk: list, text: str | None, members: list, no_questions: bool 
 TASKS = {
     "react": "상대의 방금 말을 받아 준다. 물었으면 바로 답하고, 생각을 말했으면 내 생각이나 다르게 보는 점 하나를 말한다. 되묻지 않는다.",
     "react_ask": "상대의 방금 말이나 지금 이야기를 짧게 받고, 궁금한 것 하나를 상대에게 묻는다.",
-    "each": "모두에게 물었다. 다른 친구와 다른 내 생각을 짧게 답한다. 되묻지 않는다.",
+    "each": "모두에게 한 말이다. 다른 친구와 다른 내 생각을 짧게 답한다. 앞 친구와 같은 답이면 text를 비운다. 인사·마무리 말이면 공부 이야기를 꺼내지 말고 짧은 한마디로 받거나, 이미 누가 받았으면 비운다. 되묻지 않는다.",
+    "check": "상대가 나를 포함해 몇 명의 이름을 함께 불렀다. 앞 친구들의 답을 먼저 확인하고, 내 생각이 다르거나 보탤 게 있을 때만 내 입장에서 답한다. 앞 친구와 같은 답(일정·인원 같은 사실 포함)이면 text를 비운다. 다른 친구 몫을 대신 말하거나 언급하지 않는다. 되묻지 않는다.",
     "add": "바로 앞 말에 아직 안 나온 생각이나 다른 의견 하나를 보탠다. 누구 말에 대한 것인지 드러낸다. 묻지 않는다.",
     "share": "이번 주 범위에서 내가 공부한 것 하나를 지금 이야기와 이어 나눈다. 묻지 않는다.",
     "share_ask": "이번 주 범위에서 내가 공부한 것 하나를 말하고, 상대는 어떻게 봤는지 가볍게 묻는다.",
@@ -141,8 +151,9 @@ TASKS = {
 ASKING = {"react_ask", "share_ask"}
 
 
-def step(kind: str, member_no: int, to: int | None = None) -> dict:
-    return {"kind": kind, "member_no": member_no, "to": to}
+def step(kind: str, member_no: int, to: int | None = None, called: bool = False) -> dict:
+    # called: 사용자가 이름을 부른 친구의 차례. 답할 필요가 없으면 건너뛸 수 있다.
+    return {"kind": kind, "member_no": member_no, "to": to, **({"called": True} if called else {})}
 
 
 # 사용자의 말에 어떤 역할이 나서면 어울리는지.
@@ -195,11 +206,18 @@ def turn_steps(turn: dict, talk: list, members: list, asker: int | None = None, 
     if target:  # 말 속에 나온 친구에게 이야기가 가게 한다.
         order = [order[0], target] + [n for n in order[1:] if n != target]
     a, b = order[0], order[1] if len(order) > 1 else None
+    if called:
+        return [{**s, "called": True} if i == 0 else s for i, s in enumerate(shape_steps(turn, order, members, best, rng, a, b))]
+    return shape_steps(turn, order, members, best, rng, a, b)
+
+
+def shape_steps(turn: dict, order: list, members: list, best: float, rng, a: int, b: int | None) -> list[dict]:
+    called, shape = turn["called"], turn["shape"]
     opening = "share" if turn.get("start") else "react"
     if shape == "everyone":
-        return [step("each", n) for n in order[:4]]
-    if len(called) > 1:
-        return [step("react" if i == 0 else "each", n) for i, n in enumerate(called[:4])]
+        return [step("each", n, called=True) for n in order[:4]]
+    if len(called) > 1:  # 여러 명을 불렀으면 불린 친구가 모두 차례로 확인한다.
+        return [step("check", n, called=True) for n in called[:4]]
     if shape == "quick_ask":
         return [step("react_ask", a)]
     if shape == "share_ask":

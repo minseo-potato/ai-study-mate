@@ -1,11 +1,11 @@
 {
-    "name": "ai_study_mate",
-    "short_name": "ai_study_mate",
+    "name": "SemiTalk",
+    "short_name": "SemiTalk",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "SemiTalk - AI 친구들과 함께하는 스터디",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

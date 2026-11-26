@@ -73,7 +73,8 @@ async def continue_talk(session_id: int):
     if no_questions and plan[0]["kind"] in scenes.ASKING | {"ask_peer"}:
         plan = [{**plan[0], "kind": "add"}] + plan[1:]
     try:
-        result = await say(study, plan[0], talk, "", {"week": week, "source_pages": pages, "attached_files": files, "no_questions": no_questions})
+        result = await say(study, plan[0], talk, "", {"week": week, "source_pages": pages, "attached_files": files, "no_questions": no_questions,
+                                                      "called_by_user": bool(plan[0].get("called"))})
     except HTTPException:
         result = {}
     text = agents.line(result, study["members"], "text")
@@ -82,7 +83,9 @@ async def continue_talk(session_id: int):
         if len(current["messages"]) != len(talk) or current["status"] != "active":
             return current
         if not text or text in {m["body"] for m in talk}:
-            db.execute("UPDATE sessions SET plan=? WHERE id=?", (dumps(plan[1:] if text else []), session_id))
+            # 이름이 불린 친구가 답할 필요가 없다고 비워 두면 다음 친구로 넘어간다.
+            keep = text or (plan[0].get("called") and "text" in result)
+            db.execute("UPDATE sessions SET plan=? WHERE id=?", (dumps(plan[1:] if keep else []), session_id))
         else:
             spoken = 1 + next((i for i, m in enumerate(reversed(talk)) if not m["role"].startswith("assistant")), len(talk))
             save_line(db, session, study, plan, result, text, pages, "assistant_comment", no_questions, spoken)
@@ -458,14 +461,18 @@ class Answer(BaseModel):
 
 @router.post("/sessions/{session_id}/answer")
 async def answer(session_id: int, body: Answer):
-    text = body.text.strip()
+    text = guard.clean_text(body.text).strip()
+    if not text:
+        raise HTTPException(400, "보낼 말을 써 주세요.")
     with connect() as db:
         session = session_data(db, session_id)
         if session["status"] != "active":
             raise HTTPException(409, "종료된 대화입니다.")
         study = study_data(db, session["study_id"])
         files = session_files(db, session_id, query=text)
-    trick = len(text) < 600 and guard.is_trick(text)
+    topic = " ".join([study["title"], study["goal"]] + [f"{w['title']} {w['scope']}" for w in study["weeks"]])
+    # 공격 문장이거나, 이 스터디에서는 쓸 일이 없는 말(지시문·프롬프트·JSON·모델 등)이면 딴소리로 넘긴다.
+    trick = len(text) < 600 and (guard.is_trick(text) or guard.off_study(text, topic))
     last = last_talk(session["messages"])
     presenting = session["presentation"] and not session["evaluated"] and not (last and last["review_id"])
     if trick:
@@ -513,14 +520,21 @@ async def answer(session_id: int, body: Answer):
     if question and question["review_id"]:
         return await review_reply(session, study, question, text, extra)
     plan = scenes.turn_steps(turn, talk, study["members"], question["member_no"] if question else None, text=text)
-    extra |= {"no_questions": no_questions, "called_by_user": plan[0]["member_no"] in turn["called"]}
-    if question:
-        result = await say(study, plan[0], mine(session, text), "답변 검토: 상대가 '앞서 물은 말'에 답했다. 막혔으면 작은 실마리를, 장난이면 가볍게 받는다. ",
-                           {**extra, "question": question["body"], "answer": text})
-    else:
-        result = await say(study, plan[0], mine(session, text), "자유 대화 응답: ", extra)
-    reply = agents.line(result, study["members"], "text", "reaction", "reply", limit=1500)
-    if not reply:
+    extra |= {"no_questions": no_questions}
+    result, reply = {}, ""
+    while plan:
+        called = bool(plan[0].get("called"))
+        if question:
+            result = await say(study, plan[0], mine(session, text), "답변 검토: 상대가 '앞서 물은 말'에 답했다. 막혔으면 작은 실마리를, 장난이면 가볍게 받는다. ",
+                               {**extra, "called_by_user": called, "question": question["body"], "answer": text})
+        else:
+            result = await say(study, plan[0], mine(session, text), "자유 대화 응답: ", {**extra, "called_by_user": called})
+        reply = agents.line(result, study["members"], "text", "reaction", "reply", limit=1500)
+        # 이름이 불린 친구는 답할 필요가 없으면 비워 둘 수 있다. 그러면 다음에 불린 친구가 답한다.
+        if reply or not called or "text" not in result:
+            break
+        plan = plan[1:]
+    if not reply and plan:
         raise HTTPException(502, "대답을 만들지 못했어요. 다시 보내 주세요.")
     alignment = result.get("alignment")
     if alignment not in ALIGNMENTS or (not pages and alignment != "user_question"):
@@ -529,11 +543,14 @@ async def answer(session_id: int, body: Answer):
         if required(db, "SELECT status FROM sessions WHERE id=?", (session_id,))["status"] != "active":
             raise HTTPException(409, "종료된 대화입니다.")
         db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (session_id, "user", text))
-        save_line(db, session, study, plan, result, reply, pages, "assistant_reaction", no_questions, 1)
+        if reply:
+            save_line(db, session, study, plan, result, reply, pages, "assistant_reaction", no_questions, 1)
+        else:  # 불린 친구 모두 답할 필요가 없었다.
+            db.execute("UPDATE sessions SET plan='[]' WHERE id=?", (session_id,))
         if question and body.needs_review:
             db.execute("UPDATE sessions SET unanswered=? WHERE id=?", (dumps(session["unanswered"] + [question["body"]]), session_id))
         response = session_data(db, session_id)
-        response["turn_done"] = "text" in result
+        response["turn_done"] = "text" in result or not reply
         response["answer_alignment"] = alignment
         return response
 
@@ -582,7 +599,8 @@ async def shrug(session, study, text, turn) -> dict:
         reply = clean_speech(result.get("text"), members)[:200]
     except HTTPException:
         reply = ""
-    if not reply or guard.is_trick(reply):
+    # 넘기는 말은 짧은 한마디여야 한다. 길거나 공부 이야기로 새면 정해 둔 말로 바꾼다.
+    if not reply or guard.is_trick(reply) or len(reply) > 45 or reply.count(".") > 1:
         reply = guard.brush_off(len(session["messages"]))
     with connect() as db:
         db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (session_id, "user", text))
