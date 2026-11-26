@@ -400,7 +400,7 @@ def session_data(db, session_id):
     for message in session["messages"]:
         message["file"] = files.get(message.pop("attachment_id"))
         message["speaker"] = speakers.get(message["member_no"], session["user_name"]) \
-            if message["role"] != "evaluation" else "발표 평가"
+            if message["role"] != "evaluation" else "마무리 피드백"
         message["data"] = json.loads(message["data"]) if message["data"] else None
     plan = loads(session.pop("plan"))
     session["more"] = session["status"] == "active" and bool(plan)
@@ -413,11 +413,15 @@ def session_data(db, session_id):
         session["kind"] == "study" and last_week and old_style and session["total_weeks"] > 1)
     # 이번 주를 마치면 발표로 넘어가는지
     session["presentation_next"] = session["kind"] == "study" and last_week and not old_style
-    session["label"] = "최종 발표" if session["kind"] == "presentation" else f"{session['week_no']}주차"
+    # 발표는 '마무리 주'로 보여 준다. 주차가 하나 더 있는 것처럼 진행 칸 수(stages)에도 넣는다.
+    session["label"] = "마무리 주" if session["kind"] == "presentation" else f"{session['week_no']}주차"
+    session["stages"] = session["total_weeks"] + (0 if old_style else 1)
     following = db.execute("SELECT week_no,title,meeting_date FROM weeks WHERE study_id=? AND week_no=?",
                            (session["study_id"], session["week_no"] + 1)).fetchone()
     session["next_week"] = dict(following) if following and session["kind"] != "presentation" else None
     session["evaluated"] = any(m["role"] == "evaluation" for m in session["messages"])
+    # 마친 주의 정리를 아직 만드는 중인지(만들어지면 채팅에 따로 올라간다)
+    session["summarizing"] = session["status"] == "finished" and session["kind"] != "review" and not session["minutes"]
     # 예전에 '이름:'이 붙은 채 저장된 말도 화면과 프롬프트에서는 지워서 쓴다.
     for message in session["messages"]:
         if not message["role"].startswith("user"):

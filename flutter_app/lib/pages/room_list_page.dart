@@ -217,7 +217,8 @@ class _RoomListPageState extends State<RoomListPage> {
     }
     final chosen = studies.where((s) => selected?.contains(s['id']) ?? false).toList();
     final allArchived = chosen.isNotEmpty && chosen.every((s) => s['archived'] == 1);
-    return ColoredBox(color: pageBg, child: Center(child: ConstrainedBox(
+    // 넓은 화면에서도 양옆이 비어 보이지 않게 바탕을 끝까지 채우고, 내용만 가운데에 둔다.
+    return ColoredBox(color: Colors.white, child: Center(child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: chatMaxWidth), child: Scaffold(
       backgroundColor: Colors.white,
       appBar: editing ? AppBar(

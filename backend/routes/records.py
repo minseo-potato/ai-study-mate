@@ -15,7 +15,7 @@ router = APIRouter(dependencies=[Depends(current_user)])
 def list_minutes(study_id: int):
     with connect() as db:
         required(db, "SELECT 1 FROM studies WHERE id=?", (study_id,))
-        return [{"week_no": r["week_no"], "session_id": r["id"], "minutes": json.loads(r["minutes"])}
+        return [{"week_no": r["week_no"], "session_id": r["id"], "minutes": json.loads(r["minutes"]) if r["minutes"] else {}}
                 for r in db.execute("SELECT * FROM sessions WHERE study_id=? AND status='finished' AND kind!='review' ORDER BY week_no,id", (study_id,))]
 
 

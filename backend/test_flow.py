@@ -602,6 +602,26 @@ class FlowTest(unittest.TestCase):
         self.assertFalse(guard.off_study("프롬프트 인젝션이 뭐야?", "AI 보안 프롬프트 인젝션 방어"))
         self.assertFalse(guard.off_study("모델이 왜 틀리는 거야? 너는 어떻게 봐?", "머신러닝 모델 기초"))
 
+    def test_week_closes_first_and_summary_comes_later(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}), patch("ai.generate_json", fake_ai):
+            client = make_client()
+            study = client.post("/studies", data={"title": "정렬", "weeks": "2", "member_count": "2"}).json()
+            one = client.post(f"/studies/{study['id']}/room").json()["session"]
+            client.post(f"/sessions/{one['id']}/question")
+            closed = client.post(f"/sessions/{one['id']}/finish", json={}).json()
+            # 마치면 바로 닫히고, 정리는 아직 비어 있다.
+            self.assertEqual((closed["status"], closed["summarizing"], closed["minutes"]), ("finished", True, ""))
+            # 다음 주는 정리를 기다리지 않고 바로 시작할 수 있다.
+            two = client.post(f"/studies/{study['id']}/room").json()["session"]
+            self.assertEqual((two["week_no"], two["status"]), (2, "active"))
+            done = client.post(f"/sessions/{one['id']}/summary").json()
+            self.assertFalse(done["summarizing"])
+            self.assertIn("손실 함수", json.loads(done["minutes"])["summary"])
+            # 정리가 끝나면 다시 볼 질문이 다음 주 복습으로 이어진다.
+            week2 = client.get(f"/studies/{study['id']}").json()["weeks"][1]
+            self.assertEqual(week2["review"], json.loads(done["minutes"])["next_checks"])
+
     def test_old_studies_keep_last_week_presentation(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
                 "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
@@ -801,7 +821,7 @@ class FlowTest(unittest.TestCase):
 
             two = client.post(f"/studies/{sid}/room").json()["session"]
             self.assertEqual((two["kind"], two["presentation"], two["presentation_next"], two["label"]),
-                             ("presentation", True, False, "최종 발표"))
+                             ("presentation", True, False, "마무리 주"))
             self.assertIsNone(two["next_week"])
             two = two["id"]
             opened = client.post(f"/sessions/{two}/question").json()
@@ -829,7 +849,7 @@ class FlowTest(unittest.TestCase):
             records = client.get("/me/records").json()
             self.assertEqual(records["studies"][0]["completed"], 2)
             self.assertEqual([(w["title"] if w["kind"] == "presentation" else w["week_no"], w["evaluated"]) for w in records["weeks"]],
-                             [(1, False), (2, False), ("최종 발표", True)])
+                             [(1, False), (2, False), ("마무리 주", True)])
             report = client.get(f"/studies/{sid}/learning-report").json()
             self.assertEqual(report["weeks"][-1]["evaluation"]["summary"], "순서대로 설명했다.")
             # 발표를 다시 하면 새 발표 대화가 열린다.

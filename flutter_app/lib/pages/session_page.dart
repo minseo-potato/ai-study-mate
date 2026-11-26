@@ -67,7 +67,7 @@ class _SessionPageState extends State<SessionPage> {
     }
   }
   @override void dispose() {
-    revealTimer?.cancel(); answer.dispose(); scrollController.dispose(); answerFocus.dispose(); super.dispose();
+    revealTimer?.cancel(); summaryTimer?.cancel(); answer.dispose(); scrollController.dispose(); answerFocus.dispose(); super.dispose();
   }
   void scrollToLatest({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -98,6 +98,7 @@ class _SessionPageState extends State<SessionPage> {
   Future<void> show(Map<String, dynamic> data, {bool jump = false}) async {
     if (!mounted) return;
     setState(() => session = data);
+    watchSummaries();
     scrollToLatest(animate: !jump);
     final last = lastTalk?['role'];
     if (data['status'] == 'active' && data['kind'] != 'review' && !busy && (last == null ||
@@ -349,6 +350,28 @@ class _SessionPageState extends State<SessionPage> {
   void applyRoom(Map<String, dynamic> data) {
     session = Map<String, dynamic>.from(data['session'] as Map);
     history = [for (final h in data['history'] as List) Map<String, dynamic>.from(h as Map)];
+    WidgetsBinding.instance.addPostFrameCallback((_) => watchSummaries());
+  }
+  /// 아직 만드는 중인 주차 정리를 잠깐씩 확인하고, 다 되면 그 자리에 카드를 올린다.
+  Timer? summaryTimer;
+  void watchSummaries() {
+    if (summaryTimer != null || !mounted) return;
+    summaryTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      final waiting = [...history, if (session != null) session!].where((s) => s['summarizing'] == true).toList();
+      if (waiting.isEmpty || !mounted) { summaryTimer?.cancel(); summaryTimer = null; return; }
+      for (final s in waiting) {
+        try {
+          final data = await Api.request('POST', '/sessions/${s['id']}/summary') as Map<String, dynamic>;
+          if (!mounted || data['summarizing'] == true) continue;
+          setState(() {
+            freshId = data['id'] as int;
+            final at = history.indexWhere((h) => h['id'] == data['id']);
+            if (at >= 0) history[at] = data;
+            if (session?['id'] == data['id']) session = data;
+          });
+        } catch (_) {}
+      }
+    });
   }
   /// 다시 볼 내용을 이 채팅방의 질문으로 이어 간다.
   Future<void> openReview(int reviewId) async {
@@ -372,11 +395,10 @@ class _SessionPageState extends State<SessionPage> {
         reviews: ((s['unanswered'] as List?) ?? []).length));
       if (ok != true || !mounted || busy) return;
     }
-    freshId = id;
     final saved = await act('finish', {'revised_note': ''});
+    watchSummaries();
     if (!saved || !mounted || !continuous || !(hasNext || review)) return;
-    // 정리를 읽을 틈을 두고 다음 주차를 이어 붙인다.
-    await Future<void>.delayed(const Duration(milliseconds: 1600));
+    // 정리는 뒤에서 만들어지고, 다음 주차는 바로 이어 붙인다.
     if (mounted) await openRoom();
   }
   Future<void> openRoom({bool restart = false}) async {
@@ -432,7 +454,9 @@ class _SessionPageState extends State<SessionPage> {
       if ((s['revised_note'] as String? ?? '').isNotEmpty) {
         add('me', (g) => ChatBubble(name: '나', text: s['revised_note'], mine: true, grouped: g));
       }
-      out.add(StudySummaryCard(key: ValueKey('summary$sid'), session: s, fresh: sid == freshId));
+      out.add(s['summarizing'] == true
+        ? SummarySkeleton(key: ValueKey('summary$sid'), title: isPresentationStage(s) ? '마무리 주를 정리하고 있어요' : '${s['week_no']}주차를 정리하고 있어요')
+        : StudySummaryCard(key: ValueKey('summary$sid'), session: s, fresh: sid == freshId));
     }
     return out;
   }
@@ -466,10 +490,10 @@ class _SessionPageState extends State<SessionPage> {
           Row(children: [
             Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(color: brandSoft, borderRadius: BorderRadius.circular(8)),
-              child: Text(isPresentationStage(s) ? '발표' : '${s['week_no']}/${s['total_weeks']}주차',
+              child: Text(isPresentationStage(s) ? '마무리 주' : '${s['week_no']}/${s['total_weeks']}주차',
                 style: const TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w700))),
             const SizedBox(width: 8),
-            Expanded(child: Text(isPresentationStage(s) ? '최종 발표' : '${week['title']}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
+            Expanded(child: Text(isPresentationStage(s) ? '그동안 배운 것 정리하기' : '${week['title']}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
           ]),
           if (!isPresentationStage(s) && '${week['scope']}'.trim() != '${week['title']}'.trim()) ...[
             const SizedBox(height: 8),
@@ -593,58 +617,65 @@ class _SessionPageState extends State<SessionPage> {
         return const SizedBox(height: 48);
       }
       return FilledButton(onPressed: continuous ? () => openRoom(restart: s['kind'] != 'review') : () => Navigator.pop(context),
-        child: Text(!continuous ? '돌아가기' : s['presentation'] == true ? '다시 발표하기' : '이어서 이야기하기'));
+        child: Text(!continuous ? '돌아가기' : s['presentation'] == true ? '다시 정리해 보기' : '이어서 이야기하기'));
     }
+    // 입력칸만 하얀 알약 모양으로 띄운다. 주변에는 바탕을 두지 않는다.
+    return Container(
+      padding: const EdgeInsets.fromLTRB(4, 4, 5, 4),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: lineColor),
+        boxShadow: const [BoxShadow(color: Color(0x12000000), blurRadius: 14, offset: Offset(0, 4))]),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Padding(padding: const EdgeInsets.only(bottom: 2), child: IconButton(tooltip: '파일 첨부',
+          icon: const Icon(Icons.attach_file_rounded, size: 21, color: subInk),
+          onPressed: () async { final files = await pickFiles(context); if (files.isNotEmpty && mounted) attachFiles(files); })),
+        Expanded(child: Focus(onKeyEvent: onAnswerKey, child: TextField(controller: answer, focusNode: answerFocus,
+          inputFormatters: [enterToSend], minLines: 1, maxLines: 5, keyboardType: TextInputType.multiline,
+          style: const TextStyle(fontSize: 15),
+          decoration: InputDecoration(hintText: presenting ? '정리한 내용 쓰기' : '메시지 보내기', filled: false, isDense: true,
+            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none)))),
+        const SizedBox(width: 6),
+        Padding(padding: const EdgeInsets.only(bottom: 2), child: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: answer, builder: (context, value, _) => IconButton.filled(
+          onPressed: !canSend || value.text.trim().isEmpty ? null : sendAnswer,
+          style: IconButton.styleFrom(backgroundColor: brand, foregroundColor: Colors.white,
+            disabledBackgroundColor: const Color(0xFFD9DBE0), disabledForegroundColor: Colors.white,
+            minimumSize: const Size(40, 40)),
+          icon: const Icon(Icons.arrow_upward_rounded, size: 20), tooltip: '보내기'))),
+      ]));
+  }
+  /// 입력칸 위 버튼들(힌트, 복습에 추가, 주차 마치기 등). 바탕 줄 없이 버튼만 채팅 위에 떠 있다.
+  Widget? floatingActions(Map<String, dynamic> s, List messages, bool awaiting, bool finished) {
+    if (finished) return null;
     final review = s['kind'] == 'review';
     final canHint = awaiting && !review && lastTalk?['role'] == 'assistant' && lastTalk?['review_id'] == null;
     final spoke = messages.any((m) => '${m['role']}'.startsWith('user'));
     final canFinish = !(busy || following || pending.isNotEmpty || uploads.isNotEmpty || (presenting ? !spoke : messages.isEmpty));
-    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Row(children: [Expanded(child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-        if (canHint) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(
+    Widget float(Widget chip) => Padding(padding: const EdgeInsets.only(right: 8), child: chip);
+    return Row(children: [
+      Expanded(child: SingleChildScrollView(scrollDirection: Axis.horizontal, clipBehavior: Clip.none, child: Row(children: [
+        if (canHint) float(ActionChip(elevation: 2, shadowColor: const Color(0x33000000),
           avatar: const Icon(Icons.lightbulb_outline, size: 16), label: const Text('힌트'),
           onPressed: busy ? null : () => act('explain'))),
-        if (awaiting && lastTalk?['review_id'] == null) Padding(padding: const EdgeInsets.only(right: 8), child: FilterChip(
+        if (awaiting && lastTalk?['review_id'] == null) float(FilterChip(elevation: 2, shadowColor: const Color(0x33000000),
           avatar: needsReview ? null : const Icon(Icons.bookmark_border, size: 16),
           label: const Text('복습에 추가'), selected: needsReview,
           onSelected: busy ? null : (v) => setState(() => needsReview = v))),
-        if (!awaiting && !busy && !following && !review && s['presentation'] != true) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(
+        if (!awaiting && !busy && !following && !review && s['presentation'] != true) float(ActionChip(
+          elevation: 2, shadowColor: const Color(0x33000000),
           avatar: const Icon(Icons.refresh_rounded, size: 16), label: const Text('이야기 이어가기'),
           onPressed: () => act('question'))),
       ]))),
-        const SizedBox(width: 8),
-        FinishButton(
-          label: review ? '복습 마치기' : presenting ? '피드백 받기' : s['presentation'] == true ? '스터디 마치기' : '${s['week_no']}주차 마치기',
-          icon: presenting && !review ? Icons.campaign_rounded : Icons.flag_rounded,
-          onPressed: !canFinish ? null : presenting && !review ? () => act('evaluate') : finish),
-      ]),
-      const SizedBox(height: 8),
-      Container(
-        padding: const EdgeInsets.fromLTRB(4, 4, 5, 4),
-        decoration: BoxDecoration(color: const Color(0xFFF4F5F7), borderRadius: BorderRadius.circular(26)),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Padding(padding: const EdgeInsets.only(bottom: 2), child: IconButton(tooltip: '파일 첨부',
-            icon: const Icon(Icons.attach_file_rounded, size: 21, color: subInk),
-            onPressed: () async { final files = await pickFiles(context); if (files.isNotEmpty && mounted) attachFiles(files); })),
-          Expanded(child: Focus(onKeyEvent: onAnswerKey, child: TextField(controller: answer, focusNode: answerFocus,
-            inputFormatters: [enterToSend], minLines: 1, maxLines: 5, keyboardType: TextInputType.multiline,
-            style: const TextStyle(fontSize: 15),
-            decoration: InputDecoration(hintText: presenting ? '발표 내용 쓰기' : '메시지 보내기', filled: false, isDense: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none)))),
-          const SizedBox(width: 6),
-          Padding(padding: const EdgeInsets.only(bottom: 2), child: ValueListenableBuilder<TextEditingValue>(
-            valueListenable: answer, builder: (context, value, _) => IconButton.filled(
-            onPressed: !canSend || value.text.trim().isEmpty ? null : sendAnswer,
-            style: IconButton.styleFrom(backgroundColor: brand, foregroundColor: Colors.white,
-              disabledBackgroundColor: const Color(0xFFD9DBE0), disabledForegroundColor: Colors.white,
-              minimumSize: const Size(40, 40)),
-            icon: const Icon(Icons.arrow_upward_rounded, size: 20), tooltip: '보내기'))),
-        ])),
+      const SizedBox(width: 8),
+      FinishButton(
+        label: review ? '복습 마치기' : presenting ? '피드백 받기' : s['presentation'] == true ? '스터디 마치기' : '${s['week_no']}주차 마치기',
+        icon: presenting && !review ? Icons.campaign_rounded : Icons.flag_rounded,
+        onPressed: !canFinish ? null : presenting && !review ? () => act('evaluate') : finish),
     ]);
   }
   /// 최근 말부터 거꾸로 그리는 목록. 보이는 말풍선만 만들어 대화가 길어져도 끊기지 않는다.
-  Widget chatList(Map<String, dynamic> s, bool wide, bool typing) {
+  Widget chatList(Map<String, dynamic> s, bool wide, bool typing, {double bottomGap = 0}) {
     final items = <Widget>[
       for (final past in history) ...sessionBlock(past),
       ...sessionBlock(s),
@@ -652,9 +683,9 @@ class _SessionPageState extends State<SessionPage> {
       for (final f in uploads) FileBubble(name: f.name, size: f.bytes.length, uploading: true),
       if (typing) TypingBubble(member: hidden > 0
         ? memberOf((s['messages'] as List)[(s['messages'] as List).length - hidden]['member_no'] as int?) : composing ? memberOf(s['next_speaker'] as int?) : typingMember),
-      if (busyAction == 'finish' && s['kind'] != 'review') SummarySkeleton(weekNo: s['week_no'] as int),
-      if (busyAction == 'evaluate') const WorkingNote('발표를 되짚어 보고 있어요'),
-      const SizedBox(height: 16),
+      if (busyAction == 'evaluate') const WorkingNote('들려준 내용을 되짚어 보고 있어요'),
+      // 떠 있는 버튼에 마지막 말이 가리지 않도록 그만큼 띄운다.
+      SizedBox(height: 16 + bottomGap),
     ];
     return Align(alignment: Alignment.topCenter, child: ListView.builder(
       controller: scrollController, reverse: true, itemCount: items.length,
@@ -673,14 +704,19 @@ class _SessionPageState extends State<SessionPage> {
     // 발표 중에는 내 말을 저장만 하므로 친구가 쓰는 중 표시를 띄우지 않는다.
     final typing = hidden > 0 || composing ? composing : thinking && !(presenting && busyAction == 'answer' && messages.isNotEmpty);
     final wide = MediaQuery.sizeOf(context).width >= wideBreakpoint;
+    final actions = s == null ? null : floatingActions(s, messages, awaiting, finished);
+    final side = wide ? 24.0 : 12.0;
     final chat = s == null ? const Center(child: CircularProgressIndicator()) : Column(children: [
-        Expanded(child: chatList(s, wide, typing)),
-        Container(
-          decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: lineColor))),
-          child: SafeArea(top: false, child: Center(child: ConstrainedBox(
+        Expanded(child: Stack(children: [
+          Positioned.fill(child: chatList(s, wide, typing, bottomGap: actions == null ? 0 : 48)),
+          if (actions != null) Positioned(left: 0, right: 0, bottom: 4, child: Center(child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: chatMaxWidth),
-            child: Padding(padding: EdgeInsets.fromLTRB(wide ? 24 : 12, 10, wide ? 24 : 12, 10),
-              child: composer(s, messages, awaiting, finished)))))),
+            child: Padding(padding: EdgeInsets.symmetric(horizontal: side), child: actions)))),
+        ])),
+        SafeArea(top: false, child: Center(child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: chatMaxWidth),
+          child: Padding(padding: EdgeInsets.fromLTRB(side, 6, side, 12),
+            child: composer(s, messages, awaiting, finished))))),
       ]);
     final sideOpen = wide && infoOpen && s != null;
     return Scaffold(key: sessionScaffoldKey,
@@ -700,7 +736,7 @@ class _SessionPageState extends State<SessionPage> {
           crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(roomTitle.isEmpty ? '${s?['week_no'] ?? ''}주차' : roomTitle, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-          if (s != null) Text(isPresentationStage(s) ? '모든 주차 완료 · 최종 발표' : '${s['week_no']}/${s['total_weeks']}주차 · ${(s['week'] as Map)['title']}',
+          if (s != null) Text(isPresentationStage(s) ? '마무리 주 · 그동안 배운 것 정리하기' : '${s['week_no']}/${s['total_weeks']}주차 · ${(s['week'] as Map)['title']}',
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: mutedInk)),
         ]))]))),

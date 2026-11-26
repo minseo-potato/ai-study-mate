@@ -99,14 +99,17 @@ class _TypingDotsState extends State<TypingDots> with SingleTickerProviderStateM
 /// 채팅 안에서 주차가 바뀌는 지점을 알려주는 알약 모양 구분선.
 /// 대화 단계 이름: 'N주차 · 제목' 또는 '최종 발표'.
 bool isPresentationStage(Map s) => s['kind'] == 'presentation';
-String stageTitle(Map s) => isPresentationStage(s) ? '최종 발표' : '${s['week_no']}주차 · ${(s['week'] as Map)['title']}';
+String stageTitle(Map s) => isPresentationStage(s) ? '마무리 주 · 그동안 배운 것 정리하기' : '${s['week_no']}주차 · ${(s['week'] as Map)['title']}';
+/// 진행 칸 수. 주차를 다 마친 뒤의 마무리 주도 한 칸으로 센다.
+int stageCount(Map s) => s['stages'] as int? ?? s['total_weeks'] as int;
+int stageDone(Map s) => isPresentationStage(s) ? stageCount(s) : s['week_no'] as int;
 
 /// 주차를 모두 마친 뒤 이어지는 최종 발표 안내.
 class PresentationNextLine extends StatelessWidget {
   const PresentationNextLine({super.key});
   @override Widget build(BuildContext context) => const Row(children: [
-    Icon(Icons.campaign_rounded, size: 16, color: brand), SizedBox(width: 8),
-    Expanded(child: Text('다음은 최종 발표예요', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: ink))),
+    Icon(Icons.arrow_forward_rounded, size: 16, color: brand), SizedBox(width: 8),
+    Expanded(child: Text('마무리 주  그동안 배운 것 정리하기', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: ink))),
   ]);
 }
 
@@ -144,13 +147,13 @@ class StudySummaryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             const Icon(Icons.check_circle_rounded, size: 18, color: brand), const SizedBox(width: 8),
-            Expanded(child: Text(isPresentationStage(session) ? '최종 발표 정리' : '${session['week_no']}주차 정리',
+            Expanded(child: Text(isPresentationStage(session) ? '마무리 주 정리' : '${session['week_no']}주차 정리',
               style: const TextStyle(fontWeight: FontWeight.w700, color: ink))),
             Text(isPresentationStage(session) ? '스터디 완료' : '${session['week_no']}/${session['total_weeks']}주',
               style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
           ]),
           const SizedBox(height: 10),
-          WeekDots(total: session['total_weeks'] as int, done: session['week_no'] as int),
+          WeekDots(total: stageCount(session), done: stageDone(session)),
         ])),
         Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${minutes['summary'] ?? ''}', style: const TextStyle(height: 1.55, color: ink)),
@@ -282,7 +285,7 @@ class EvaluationCard extends StatelessWidget {
     clipBehavior: Clip.antiAlias,
     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Container(color: brandSoft, padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: const Text('발표 평가', style: TextStyle(fontWeight: FontWeight.w700, color: ink))),
+        child: const Text('마무리 피드백', style: TextStyle(fontWeight: FontWeight.w700, color: ink))),
       Padding(padding: const EdgeInsets.all(16), child: EvaluationBody(data, summary: summary)),
     ])));
 }
@@ -317,7 +320,8 @@ class FinishButton extends StatelessWidget {
   final VoidCallback? onPressed;
   const FinishButton({super.key, required this.label, required this.icon, this.onPressed});
   @override Widget build(BuildContext context) => TextButton.icon(onPressed: onPressed,
-    style: TextButton.styleFrom(backgroundColor: onPressed == null ? pageBg : brandSoft, foregroundColor: brand,
+    style: TextButton.styleFrom(backgroundColor: onPressed == null ? Colors.white : brandSoft, foregroundColor: brand,
+      elevation: 2, shadowColor: const Color(0x33000000),
       disabledForegroundColor: mutedInk, minimumSize: const Size(0, 38), padding: const EdgeInsets.symmetric(horizontal: 14),
       textStyle: const TextStyle(fontFamily: 'NotoSansKR', fontSize: 13, fontWeight: FontWeight.w700),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(19))),
@@ -342,12 +346,12 @@ class FinishSheet extends StatelessWidget {
       Text(next == null && !toPresentation ? '스터디를 마칠까요?' : '$weekNo주차를 마칠까요?',
         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: ink)),
       const SizedBox(height: 4),
-      Text(isPresentationStage(session) ? '최종 발표' : '${(session['week'] as Map)['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+      Text(isPresentationStage(session) ? '그동안 배운 것 정리하기' : '${(session['week'] as Map)['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 14, color: subInk)),
       const SizedBox(height: 18),
       TweenAnimationBuilder<double>(tween: Tween(begin: MediaQuery.disableAnimationsOf(context) ? 1 : 0, end: 1),
         duration: const Duration(milliseconds: 500), curve: Curves.easeOut,
-        builder: (context, t, _) => WeekDots(total: session['total_weeks'] as int, done: t > 0.5 ? weekNo : weekNo - 1)),
+        builder: (context, t, _) => WeekDots(total: stageCount(session), done: t > 0.5 ? stageDone(session) : stageDone(session) - 1)),
       const SizedBox(height: 18),
       Container(padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(color: pageBg, borderRadius: BorderRadius.circular(14)),
@@ -356,7 +360,7 @@ class FinishSheet extends StatelessWidget {
       else if (toPresentation) const Padding(padding: EdgeInsets.fromLTRB(4, 16, 4, 0), child: PresentationNextLine()),
       const SizedBox(height: 22),
       FilledButton(onPressed: () => Navigator.pop(context, true),
-        child: Text(next != null ? '정리하고 ${next['week_no']}주차로' : toPresentation ? '정리하고 발표로' : '스터디 마치기')),
+        child: Text(next != null ? '정리하고 ${next['week_no']}주차로' : toPresentation ? '정리하고 마무리 주로' : '스터디 마치기')),
       const SizedBox(height: 6),
       TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('더 이야기하기')),
     ]));
@@ -365,8 +369,8 @@ class FinishSheet extends StatelessWidget {
 
 /// 주차 정리가 만들어지는 동안, 곧 올라올 카드 모양으로 자리를 잡아 둔다.
 class SummarySkeleton extends StatefulWidget {
-  final int weekNo;
-  const SummarySkeleton({super.key, required this.weekNo});
+  final String title;
+  const SummarySkeleton({super.key, required this.title});
   @override State<SummarySkeleton> createState() => _SummarySkeletonState();
 }
 class _SummarySkeletonState extends State<SummarySkeleton> with SingleTickerProviderStateMixin {
@@ -384,7 +388,7 @@ class _SummarySkeletonState extends State<SummarySkeleton> with SingleTickerProv
     decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)), clipBehavior: Clip.antiAlias,
     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Container(color: brandSoft, padding: const EdgeInsets.fromLTRB(16, 14, 16, 14), child: Row(children: [
-        Expanded(child: Text('${widget.weekNo}주차를 정리하고 있어요', style: const TextStyle(fontWeight: FontWeight.w700, color: ink))),
+        Expanded(child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w700, color: ink))),
         const TypingDots(),
       ])),
       Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 18), child: AnimatedBuilder(animation: controller,

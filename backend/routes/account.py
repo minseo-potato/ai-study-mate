@@ -136,7 +136,7 @@ def my_records(user: dict = Depends(current_user)):
                 " WHERE st.user_id=? AND s.status='finished' AND s.kind!='review' ORDER BY s.week_no,s.id", (user["id"],)):
             minutes = json.loads(row["minutes"]) if row["minutes"] else {}
             weeks.append({k: row[k] for k in ("session_id", "study_id", "study_title", "week_no", "title", "kind")}
-                         | ({"title": "최종 발표"} if row["kind"] == "presentation" else {})
+                         | ({"title": "마무리 주"} if row["kind"] == "presentation" else {})
                          | {"summary": minutes.get("summary", ""), "keywords": minutes.get("keywords", []),
                             "stats": minutes.get("stats", {}), "learned": minutes.get("learned", [])[:2],
                             "evaluated": bool(minutes.get("evaluation"))})

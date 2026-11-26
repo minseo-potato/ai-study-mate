@@ -44,9 +44,10 @@ class MyPage extends StatelessWidget {
     final joined = DateTime.tryParse('${user['created_at']}');
     final card = BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18), border: Border.all(color: lineColor));
     final divider = Container(width: 1, height: 32, color: lineColor);
+    // 넓은 화면에서도 양옆이 비어 보이지 않게 바탕을 끝까지 채우고, 내용만 가운데에 둔다.
     return ColoredBox(color: pageBg, child: Center(child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: chatMaxWidth), child: Scaffold(
-      appBar: AppBar(titleSpacing: 20, shape: const Border(),
+      appBar: AppBar(titleSpacing: 20, shape: const Border(), backgroundColor: pageBg,
         title: const Text('마이', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800))),
       body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 40), children: [
         Container(padding: const EdgeInsets.all(18), decoration: card, child: Row(children: [

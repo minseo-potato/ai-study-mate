@@ -1,6 +1,6 @@
 """채팅 세션 API: 질문, 힌트, 답변(운영 요청 포함), 주차 마무리."""
 import json
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 import asyncio
 import agents
@@ -275,7 +275,7 @@ async def evaluate(session_id: int):
         try:
             said = await agents.speak(
                 study, member, [],
-                "발표 소감: 상대가 모든 주차를 마치고 최종 발표를 끝냈다. 발표한 말과 올린 파일에 실제로 나온 내용을 짚어 좋았던 점과 고치면 좋을 점을 두세 문장으로 말한다. 묻지 않는다.", material)
+                "발표 소감: 상대가 마무리 주에 그동안 공부한 것을 쭉 정리해서 들려줬다. '발표'라는 말은 쓰지 않는다. 상대가 한 말과 올린 파일에 실제로 나온 내용을 짚어 좋았던 점과 고치면 좋을 점을 두세 문장으로 말한다. 묻지 않는다.", material)
         except HTTPException:
             return None
         return {"member_no": member["member_no"], "text": said.get("text")}
@@ -389,7 +389,9 @@ async def next_question(session_id: int):
     if session["presentation"]:
         opening = await agents.speak(
             study, member, session["messages"],
-            "발표 열기: 모든 주차 공부를 마치고 따로 모인 최종 발표 시간이다. 상대가 그동안 공부한 것을 발표한다. 편하게 시작하도록 청하고, 파일을 올리거나 채팅으로 쭉 말해도 된다고 알려 준다. "
+            "발표 열기: 모든 주차 공부를 마치고 맞은 마무리 주다. 상대가 그동안 공부한 것을 처음부터 쭉 정리해서 들려주는 시간이다. "
+            "편하게 시작하도록 청하고, 파일을 올리거나 채팅으로 쭉 말해도 된다고 알려 준다. "
+            "'발표'라는 말은 쓰지 말고 '정리해서 들려줘', '쭉 풀어 줘'처럼 친구끼리 하듯 말한다. "
             "공부 내용은 묻지 않는다.", {})
         text = agents.line(opening, study["members"], "text", "message", limit=500)
         if not text:
@@ -632,7 +634,8 @@ class Finish(BaseModel):
 
 
 @router.post("/sessions/{session_id}/finish")
-async def finish(session_id: int, body: Finish):
+async def finish(session_id: int, body: Finish, background: BackgroundTasks):
+    """이번 주를 마친다. 바로 다음 주로 넘어갈 수 있게 먼저 닫고, 정리는 뒤에서 만들어 따로 올린다."""
     with connect() as db:
         session = session_data(db, session_id)
         if session["status"] != "active":
@@ -641,68 +644,105 @@ async def finish(session_id: int, body: Finish):
             db.execute("UPDATE sessions SET status='finished' WHERE id=?", (session_id,))
             return session_data(db, session_id)
         study = study_data(db, session["study_id"])
-        week = study["weeks"][session["week_no"] - 1]
-        if session["kind"] == "presentation":
-            week = {**week, "title": "최종 발표", "scope": "모든 주차에서 공부한 내용"}
-        files = session_files(db, session_id)
         talk = learning_messages(session["messages"])
         last_user_note = next((m["body"] for m in reversed(talk) if m["role"] == "user"), "")
         learned_source = body.revised_note.strip() or last_user_note or session["initial_note"] or study["goal"]
-        pages = source_pages(db, session["study_id"], week["scope"], learned_source,
-                             session["week_no"], len(study["weeks"]))
-        pending = list(session["unanswered"])
-        qa = build_qa(talk)
-        evaluation = next(({"summary": m["body"], **(m["data"] or {})} for m in reversed(session["messages"])
-                           if m["role"] == "evaluation"), None)
-        own = [m["body"] for m in talk if m["role"] == "user"]
-    summary = await ai.generate_json(
-        "랩미팅 회의록을 한국어로 정리하세요. 학습 기록으로 남아 나중에 다시 보는 용도입니다. "
-        "JSON 키는 summary, keywords, learned, gaps, highlight, next_checks입니다. "
-        "summary: 이번 주 주제(week.title)에 대해 사용자가 무엇을 설명했고 무엇이 분명해졌는지 두세 문장. "
-        "keywords: 이번 대화에서 다룬 핵심 개념 3~6개(짧은 명사). "
-        "learned: 사용자가 실제로 설명해 낸 내용을 사용자 입장에서 한 문장씩, 최대 4개('~를 ~라고 설명했다' 형태). "
-        "gaps: 답이 부족했거나 헷갈려 한 부분을 구체적으로 한 문장씩, 최대 4개. "
-        "highlight: 사용자 답변 중 가장 잘 설명한 문장 하나를 그대로 인용(없으면 빈 문자열). "
-        "next_checks: 다음 주에 다시 확인할 질문 배열이며, 이미 충분히 답한 내용은 넣지 마세요. "
-        "qa에 질문과 사용자 답이 짝지어 있습니다. 스쳐 간 가벼운 질문이나 이미 답한 질문은 next_checks에 넣지 말고, 정말 다시 볼 것만 최대 3개 고르세요. 각 질문은 앞뒤 대화 없이도 이해되는 한 문장이어야 합니다. 일정·계획 변경 대화는 학습 내용이 아니므로 빼고, "
-        "사용자가 말하지 않은 내용을 사용자가 설명했다고 쓰지 마세요.",
-        {**peer_context(study, talk), "study_goal": study["goal"], "week": week, "qa": qa,
-         "initial_note": session["initial_note"], "revised_note": body.revised_note,
-         "messages": brief(talk), "attached_files": files,
-         "evaluation": evaluation, "unanswered": pending, "source_pages": pages},
-    )
-    checks = list(dict.fromkeys(str(x).strip()[:500] for x in pending + clean_list(summary.get("next_checks"), 20, 500)
-                                if str(x).strip()))[:20]
-    highlight = str(summary.get("highlight") or "").strip()[:300]
-    minutes = {"summary": str(summary.get("summary", "")), "source_pages": [p["page_no"] for p in pages],
-               "keywords": clean_list(summary.get("keywords"), 6, 30),
-               "learned": clean_list(summary.get("learned"), 4),
-               "gaps": clean_list(summary.get("gaps"), 4),
-               "highlight": highlight if any(highlight and highlight in text for text in own) else "",
-               "qa": qa, "stats": {**qa_stats(qa), "reviews": len(checks)},
-               "initial_note": session["initial_note"], "revised_note": body.revised_note,
-               "messages": brief(session["messages"]), "next_checks": checks, "evaluation": evaluation}
-    with connect() as db:
-        required(db, "SELECT id FROM sessions WHERE id=? AND status='active'", (session_id,))
-        db.execute("UPDATE sessions SET revised_note=?,unanswered=?,minutes=?,status='finished' WHERE id=?",
-                   (body.revised_note, dumps(checks), dumps(minutes), session_id))
-        db.execute("UPDATE sessions SET plan='[]' WHERE id=?", (session_id,))
-        for question in checks:
-            db.execute("INSERT INTO review_items(study_id,question,source_week) VALUES(?,?,?) "
-                       "ON CONFLICT(study_id,question) DO UPDATE SET source_week=excluded.source_week,"
-                       "status='open',resolved_at=NULL",
-                       (session["study_id"], question, session["week_no"]))
+        db.execute("UPDATE sessions SET revised_note=?,minutes='',plan='[]',status='finished' WHERE id=?",
+                   (body.revised_note, session_id))
         for member in study["members"]:
             learned = f"{member['understanding']} | {session['week_no']}주차에 {study['user_name'] or '친구'}가 말한 것: {learned_source}"
             db.execute("UPDATE members SET understanding=? WHERE study_id=? AND member_no=?",
                        (learned[-500:], session["study_id"], member["member_no"]))
         db.execute("UPDATE weeks SET status='complete',progress_percent=100,remaining_scope='' WHERE study_id=? AND week_no=?",
                    (session["study_id"], session["week_no"]))
-        if session["week_no"] < len(study["weeks"]):
-            next_no = session["week_no"] + 1
-            next_week = required(db, "SELECT review FROM weeks WHERE study_id=? AND week_no=?",
-                                 (session["study_id"], next_no))
-            review = list(dict.fromkeys(loads(next_week["review"]) + checks))
-            db.execute("UPDATE weeks SET review=? WHERE study_id=? AND week_no=?",
-                       (dumps(review), session["study_id"], next_no))
+        _summarizing.add(session_id)
+        background.add_task(summarize, session_id)
         return session_data(db, session_id)
+
+
+@router.post("/sessions/{session_id}/summary")
+async def summary_status(session_id: int, background: BackgroundTasks):
+    """정리가 다 됐는지 본다. 서버가 다시 켜져서 멈춘 정리는 다시 만든다."""
+    with connect() as db:
+        session = session_data(db, session_id)
+        if session["summarizing"] and session_id not in _summarizing:
+            _summarizing.add(session_id)
+            background.add_task(summarize, session_id)
+        return session
+
+
+# 지금 정리를 만들고 있는 대화
+_summarizing: set[int] = set()
+
+
+async def summarize(session_id: int):
+    """마친 주의 대화로 회의록과 다시 볼 질문을 만들어 저장한다."""
+    try:
+        with connect() as db:
+            session = session_data(db, session_id)
+            if not session["summarizing"]:
+                return
+            study = study_data(db, session["study_id"])
+            week = study["weeks"][session["week_no"] - 1]
+            if session["kind"] == "presentation":
+                week = {**week, "title": "마무리", "scope": "모든 주차에서 공부한 내용"}
+            files = session_files(db, session_id)
+            talk = learning_messages(session["messages"])
+            last_user_note = next((m["body"] for m in reversed(talk) if m["role"] == "user"), "")
+            learned_source = session["revised_note"].strip() or last_user_note or session["initial_note"] or study["goal"]
+            pages = source_pages(db, session["study_id"], week["scope"], learned_source,
+                                 session["week_no"], len(study["weeks"]))
+            pending = list(session["unanswered"])
+            qa = build_qa(talk)
+            evaluation = next(({"summary": m["body"], **(m["data"] or {})} for m in reversed(session["messages"])
+                               if m["role"] == "evaluation"), None)
+            own = [m["body"] for m in talk if m["role"] == "user"]
+        try:
+            summary = await ai.generate_json(
+                "랩미팅 회의록을 한국어로 정리하세요. 학습 기록으로 남아 나중에 다시 보는 용도입니다. "
+                "JSON 키는 summary, keywords, learned, gaps, highlight, next_checks입니다. "
+                "summary: 이번 주 주제(week.title)에 대해 사용자가 무엇을 설명했고 무엇이 분명해졌는지 두세 문장. "
+                "keywords: 이번 대화에서 다룬 핵심 개념 3~6개(짧은 명사). "
+                "learned: 사용자가 실제로 설명해 낸 내용을 사용자 입장에서 한 문장씩, 최대 4개('~를 ~라고 설명했다' 형태). "
+                "gaps: 답이 부족했거나 헷갈려 한 부분을 구체적으로 한 문장씩, 최대 4개. "
+                "highlight: 사용자 답변 중 가장 잘 설명한 문장 하나를 그대로 인용(없으면 빈 문자열). "
+                "next_checks: 다음 주에 다시 확인할 질문 배열이며, 이미 충분히 답한 내용은 넣지 마세요. "
+                "qa에 질문과 사용자 답이 짝지어 있습니다. 스쳐 간 가벼운 질문이나 이미 답한 질문은 next_checks에 넣지 말고, 정말 다시 볼 것만 최대 3개 고르세요. 각 질문은 앞뒤 대화 없이도 이해되는 한 문장이어야 합니다. 일정·계획 변경 대화는 학습 내용이 아니므로 빼고, "
+                "사용자가 말하지 않은 내용을 사용자가 설명했다고 쓰지 마세요.",
+                {**peer_context(study, talk), "study_goal": study["goal"], "week": week, "qa": qa,
+                 "initial_note": session["initial_note"], "revised_note": session["revised_note"],
+                 "messages": brief(talk), "attached_files": files,
+                 "evaluation": evaluation, "unanswered": pending, "source_pages": pages},
+            )
+        except Exception:
+            # 정리를 못 만들어도 카드는 올라가게 한다. 나눈 이야기는 그대로 남아 있다.
+            summary = {"summary": "이번 대화는 정리를 만들지 못했어요. 나눈 이야기는 위에 그대로 남아 있어요."}
+        checks = list(dict.fromkeys(str(x).strip()[:500] for x in pending + clean_list(summary.get("next_checks"), 20, 500)
+                                    if str(x).strip()))[:20]
+        highlight = str(summary.get("highlight") or "").strip()[:300]
+        minutes = {"summary": str(summary.get("summary", "")) or "이번 주 이야기를 마쳤어요.",
+                   "source_pages": [p["page_no"] for p in pages],
+                   "keywords": clean_list(summary.get("keywords"), 6, 30),
+                   "learned": clean_list(summary.get("learned"), 4),
+                   "gaps": clean_list(summary.get("gaps"), 4),
+                   "highlight": highlight if any(highlight and highlight in text for text in own) else "",
+                   "qa": qa, "stats": {**qa_stats(qa), "reviews": len(checks)},
+                   "initial_note": session["initial_note"], "revised_note": session["revised_note"],
+                   "messages": brief(session["messages"]), "next_checks": checks, "evaluation": evaluation}
+        with connect() as db:
+            db.execute("UPDATE sessions SET unanswered=?,minutes=? WHERE id=? AND minutes=''",
+                       (dumps(checks), dumps(minutes), session_id))
+            for question in checks:
+                db.execute("INSERT INTO review_items(study_id,question,source_week) VALUES(?,?,?) "
+                           "ON CONFLICT(study_id,question) DO UPDATE SET source_week=excluded.source_week,"
+                           "status='open',resolved_at=NULL",
+                           (session["study_id"], question, session["week_no"]))
+            if session["kind"] == "study" and session["week_no"] < len(study["weeks"]):
+                next_no = session["week_no"] + 1
+                next_week = required(db, "SELECT review FROM weeks WHERE study_id=? AND week_no=?",
+                                     (session["study_id"], next_no))
+                review = list(dict.fromkeys(loads(next_week["review"]) + checks))
+                db.execute("UPDATE weeks SET review=? WHERE study_id=? AND week_no=?",
+                           (dumps(review), session["study_id"], next_no))
+    finally:
+        _summarizing.discard(session_id)

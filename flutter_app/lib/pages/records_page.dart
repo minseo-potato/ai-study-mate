@@ -53,11 +53,11 @@ class _RecordsPageState extends State<RecordsPage> {
       child: Row(children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Text(w['kind'] == 'presentation' ? '발표' : '${w['week_no']}주차', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
+            Text(w['kind'] == 'presentation' ? '마무리' : '${w['week_no']}주차', style: const TextStyle(fontSize: 12.5, color: brand, fontWeight: FontWeight.w700)),
             const SizedBox(width: 8),
             Expanded(child: Text('${w['title']}', maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))),
-            if (w['evaluated'] == true) const Text('발표 평가',
+            if (w['evaluated'] == true) const Text('피드백',
               style: TextStyle(fontSize: 12, color: brand, fontWeight: FontWeight.w600)),
           ]),
           if (summary.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(summary, maxLines: 2,
@@ -105,9 +105,10 @@ class _RecordsPageState extends State<RecordsPage> {
 
   @override Widget build(BuildContext context) {
     final items = studies;
+    // 넓은 화면에서도 양옆이 비어 보이지 않게 바탕을 끝까지 채우고, 내용만 가운데에 둔다.
     return ColoredBox(color: pageBg, child: Center(child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: chatMaxWidth), child: Scaffold(
-      appBar: AppBar(titleSpacing: 20, shape: const Border(),
+      appBar: AppBar(titleSpacing: 20, shape: const Border(), backgroundColor: pageBg,
         title: const Text('기록', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800))),
       body: items == null ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(onRefresh: refresh,
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 40), children: [
