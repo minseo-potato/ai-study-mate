@@ -5,12 +5,11 @@
 """
 import random
 import re
-from datetime import date
 import guard
 import ai
 import scenes
 from common import PERSONAS, LEVEL_GUIDE, clean_speech, peer_context
-from db import connect
+from db import connect, today
 
 RULES = """
 [규칙]
@@ -101,7 +100,7 @@ def study_info(study: dict, week_no: int | None = None) -> dict:
             item["what_we_did"] = study["week_notes"][w["week_no"]]
         listed.append(item)
     people = [{"name": m["name"], "interest": m["persona"]["role"], "level": m["level"]} for m in study["members"]]
-    return {"room_name": study["title"], "topic": study["goal"], "today": date.today().isoformat(),
+    return {"room_name": study["title"], "topic": study["goal"], "today": today().isoformat(),
             "friends": people, "friend_count": len(people), "people_count": len(people) + 1, "user": study["user_name"],
             "total_weeks": len(weeks), "current_week": next(w for w in listed if w["week_no"] == week_no), "weeks": listed,
             "all_done": bool(weeks) and all(w["status"] == "complete" for w in weeks),

@@ -89,7 +89,7 @@ class _StudyPageState extends State<StudyPage> {
               decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE1E3E8))),
               child: Row(children: [
                 const Icon(Icons.event_outlined, color: mutedInk), const SizedBox(width: 12),
-                const Text('모임 날짜', style: TextStyle(color: subInk)), const Spacer(),
+                const Text('시작 날짜', style: TextStyle(color: subInk)), const Spacer(),
                 Text(friendlyDate(date.toIso8601String().substring(0, 10)), style: const TextStyle(fontWeight: FontWeight.w600)),
               ])))),
           if (week['week_no'] > 1 && !complete) SwitchListTile(contentPadding: const EdgeInsets.only(left: 4),
@@ -134,7 +134,8 @@ class _StudyPageState extends State<StudyPage> {
               child: Text('${w['scope']}', maxLines: 2, overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 13, color: subInk, height: 1.4))),
             const SizedBox(height: 6),
-            Text('${friendlyDate('${w['meeting_date']}')}${current ? ' · 진행 중' : complete ? ' · 완료' : ''}',
+            // 주차 날짜는 그 주차로 넘어간 날이라, 아직 시작하지 않은 주차는 날짜 없이 둔다.
+            Text(complete || current ? '${friendlyDate('${w['meeting_date']}')}${current ? ' · 진행 중' : ' · 완료'}' : '예정',
               style: TextStyle(fontSize: 12, color: current ? brand : mutedInk,
                 fontWeight: current ? FontWeight.w600 : FontWeight.w400)),
           ])),
@@ -163,7 +164,7 @@ class _StudyPageState extends State<StudyPage> {
               const SizedBox(height: 14),
               Row(children: [
                 const Icon(Icons.event_outlined, size: 16, color: mutedInk), const SizedBox(width: 6),
-                Text('다음 모임 ${friendlyDate('${current['meeting_date']}')}',
+                Text('${current['week_no']}주차 시작 ${friendlyDate('${current['meeting_date']}')}',
                   style: const TextStyle(fontSize: 13, color: subInk)),
               ]),
             ],

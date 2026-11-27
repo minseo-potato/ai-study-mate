@@ -30,7 +30,6 @@ class _CreatePageState extends State<CreatePage> {
   final friends = [_Friend(0, '기초'), _Friend(1, '중급'), _Friend(2, '심화'), _Friend(3, '중급', joined: false)];
   static const weekChoices = [2, 4, 6, 8, 12];
   int weeks = 4;
-  DateTime start = DateTime.now();
   final pdfs = <PickedFile>[];
   bool busy = false;
   @override void dispose() { title.dispose(); super.dispose(); }
@@ -40,13 +39,6 @@ class _CreatePageState extends State<CreatePage> {
   Future<void> pickPdf() async {
     final files = await pickFiles(context);
     if (files.isNotEmpty && mounted) setState(() => pdfs.addAll(files));
-  }
-
-  Future<void> pickStart() async {
-    final now = DateTime.now();
-    final d = await showDatePicker(context: context, initialDate: start,
-      firstDate: DateTime(now.year - 1), lastDate: DateTime(now.year + 2));
-    if (d != null) setState(() => start = d);
   }
 
   Future<void> rename(_Friend friend) async {
@@ -61,9 +53,8 @@ class _CreatePageState extends State<CreatePage> {
     setState(() => busy = true);
     try {
       final joined = friends.where((f) => f.joined).toList();
-      final date = '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}';
       final study = await Api.create({
-        'title': title.text.trim(), 'start_date': date, 'weeks': '$weeks',
+        'title': title.text.trim(), 'weeks': '$weeks',
         'member_count': '${joined.length}',
         'member_profiles': jsonEncode([for (final f in joined) {'role': f.role, 'name': f.name, 'level': f.level, 'avatar': f.avatar, 'note': f.note}]),
       }, pdfs.isEmpty ? null : pdfs.first);
@@ -157,19 +148,6 @@ class _CreatePageState extends State<CreatePage> {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             onSelected: (_) => setState(() => weeks = w)),
         ]),
-        const SizedBox(height: 12),
-        Material(color: Colors.white, borderRadius: BorderRadius.circular(14), child: InkWell(
-          onTap: pickStart, borderRadius: BorderRadius.circular(14),
-          child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE1E3E8))),
-            child: Row(children: [
-              const Icon(Icons.event_outlined, color: mutedInk), const SizedBox(width: 12),
-              const Text('시작일', style: TextStyle(color: subInk)),
-              const Spacer(),
-              Text(friendlyDate(start.toIso8601String().substring(0, 10)),
-                style: const TextStyle(fontWeight: FontWeight.w600, color: ink)),
-              const SizedBox(width: 4), const Icon(Icons.chevron_right_rounded, color: mutedInk),
-            ])))),
         label('함께할 AI 친구'),
         ...friends.map(friendCard),
       ])),

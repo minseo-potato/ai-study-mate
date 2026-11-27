@@ -502,7 +502,7 @@ class _SessionPageState extends State<SessionPage> {
           const SizedBox(height: 10),
           Row(children: [
             const Icon(Icons.event_outlined, size: 16, color: mutedInk), const SizedBox(width: 6),
-            Text('모임 ${friendlyDate('${week['meeting_date']}')}', style: const TextStyle(fontSize: 13, color: mutedInk)),
+            Text('시작 ${friendlyDate('${week['meeting_date']}')}', style: const TextStyle(fontSize: 13, color: mutedInk)),
           ]),
         ]),
         InfoSection(title: '스터디원 ${members.length + 1}', children: [

@@ -13,7 +13,7 @@ import httpx
 from reportlab.pdfgen import canvas
 
 from ai import demo_mode, demo_response, generate_json
-from db import connect, migrate
+from db import connect, migrate, today as kst_today
 from main import app
 
 
@@ -82,6 +82,23 @@ class FlowTest(unittest.TestCase):
     def setUp(self):
         import limits
         limits._hits.clear()
+
+    def test_week_dates_follow_creation_and_week_change(self):
+        from datetime import date, timedelta
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+            "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+            client = make_client()
+            # 보낸 시작일은 무시하고 만든 날을 1주차 날짜로 쓴다.
+            study = client.post("/studies", data={"title": "신경망", "start_date": "2020-01-01", "weeks": "3"}).json()
+            today = kst_today().isoformat()
+            self.assertEqual(study["weeks"][0]["meeting_date"], today)
+            self.assertEqual(study["weeks"][1]["meeting_date"], (kst_today() + timedelta(days=7)).isoformat())
+            room = client.post(f"/studies/{study['id']}/weeks/1/sessions", json={"text": ""}).json()["session_id"]
+            client.post(f"/sessions/{room}/finish", json={"revised_note": ""})
+            weeks = client.get(f"/studies/{study['id']}").json()["weeks"]
+            # 1주차를 마친 날이 2주차 날짜가 되고, 그 뒤 주차는 그대로다.
+            self.assertEqual([w["meeting_date"] for w in weeks],
+                             [today, today, (kst_today() + timedelta(days=14)).isoformat()])
 
     def test_next_week_starts_with_pending_review_when_enabled(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
@@ -736,6 +753,108 @@ class FlowTest(unittest.TestCase):
         body = "앞부분 " * 1000 + "레이어 캐시 설명 " * 50 + "뒷부분 " * 3000
         self.assertIn("레이어 캐시", common.excerpt(body, 3000, "레이어가 뭐야"))
         self.assertLess(len(common.excerpt(body, 3000, "레이어가 뭐야")), 3200)
+
+    def test_pptx_reads_slides_tables_and_notes(self):
+        import zipfile
+        import common
+        a = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="x"'
+        slide1 = (f'<p:sld {a}><p:sp><a:p><a:r><a:t>버블 정렬</a:t></a:r></a:p></p:sp>'
+                  '<a:tbl><a:tblPr><a:tableStyleId>{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}</a:tableStyleId></a:tblPr>'
+                  '<a:tc><a:p><a:r><a:t>O(n^2)</a:t></a:r></a:p></a:tc></a:tbl></p:sld>')
+        notes = (f'<p:notes {a}><p:sp><p:nvSpPr><p:ph type="sldImg"/></p:nvSpPr></p:sp>'
+                 '<p:sp><p:nvSpPr><p:ph type="body" idx="1"/></p:nvSpPr><a:p><a:r><a:t>안정 정렬임을 강조</a:t></a:r></a:p></p:sp>'
+                 '<p:sp><p:nvSpPr><p:ph type="sldNum"/></p:nvSpPr><a:p><a:fld type="slidenum"><a:t>1</a:t></a:fld></a:p></p:sp></p:notes>')
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as z:
+            z.writestr("ppt/slides/slide1.xml", slide1)
+            z.writestr("ppt/slides/_rels/slide1.xml.rels",
+                       '<Relationships><Relationship Id="rId2" Target="../notesSlides/notesSlide1.xml"/></Relationships>')
+            z.writestr("ppt/notesSlides/notesSlide1.xml", notes)
+            z.writestr("ppt/slides/slide2.xml", f'<p:sld {a}><a:p><a:r><a:t>퀵 정렬</a:t></a:r></a:p></p:sld>')
+        pages = common._office_pages(data.getvalue(), "pptx")
+        self.assertEqual(pages, ["버블 정렬\nO(n^2)\n[발표자 메모] 안정 정렬임을 강조", "퀵 정렬"])
+
+    def test_material_search_uses_meaning_and_falls_back_to_keywords(self):
+        import embed
+        import common
+        calls = []
+
+        async def fake_embed(texts, timeout):
+            # 뜻이 같은 말은 같은 방향으로 보낸다(실제 임베딩 대신).
+            calls.append(len(texts))
+            topics = (("교환", "자리 바꾸"), ("기준값", "나누"), ("날씨",))
+            return [[1.0 if any(w in t for w in words) else 0.01 for words in topics] for t in texts]
+
+        bodies = {1: "목차와 소개", 2: "퀵 정렬은 기준값으로 배열을 나눈다.", 3: "버블 정렬은 이웃한 두 값을 교환한다.", 4: "정렬 정렬 정렬 연습 문제"}
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "0", "OPENAI_API_KEY": "test"}), \
+                patch("embed._embed", fake_embed):
+            embed._queries.clear()
+            with connect() as db:
+                db.executemany("INSERT INTO pages VALUES(1,?,?)", list(bodies.items()))
+
+            async def search(note):
+                with connect() as db:
+                    return [p["page_no"] for p in await common.source_pages(db, 1, "", note)]
+            # 아직 임베딩이 없으면 키워드로 찾고, 만들기를 뒤에서 예약한다.
+            self.assertEqual(asyncio.run(search("정렬에서 자리 바꾸기"))[0], 4)
+            asyncio.run(embed.index_study(1))
+            with connect() as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM page_vectors WHERE study_id=1").fetchone()[0], 4)
+            self.assertEqual(asyncio.run(embed.index_study(1)), 0)  # 바뀐 게 없으면 다시 만들지 않는다.
+            # 키워드가 겹치지 않아도 뜻이 가까운 쪽이 먼저 나온다.
+            self.assertEqual(asyncio.run(search("정렬에서 자리 바꾸기"))[0], 3)
+            self.assertEqual(asyncio.run(search("정렬에서 자리 바꾸기"))[0], 3)
+            self.assertEqual(calls, [4, 1])  # 같은 말은 다시 임베딩하지 않는다.
+            # 쪽 내용이 바뀌면 옛 벡터를 쓰지 않고 키워드로 돌아갔다가, 다시 만들면 새 내용으로 찾는다.
+            with connect() as db:
+                db.execute("UPDATE pages SET body='날씨 이야기' WHERE study_id=1 AND page_no=3")
+            self.assertEqual(asyncio.run(search("정렬에서 자리 바꾸기"))[0], 4)
+            asyncio.run(embed.index_study(1))
+            with connect() as db:
+                rows = list(db.execute("SELECT page_no,page_hash FROM page_vectors WHERE study_id=1 ORDER BY page_no"))
+                self.assertEqual([r[0] for r in rows], [1, 2, 3, 4])  # 옛 3쪽 벡터는 지우고 새로 만든다.
+                self.assertEqual(rows[2][1], embed.page_hash("날씨 이야기"))
+            self.assertEqual(asyncio.run(search("오늘 날씨"))[0], 3)
+
+            # 검색할 말을 임베딩하지 못하면 키워드로 찾는다.
+            async def broken(texts, timeout):
+                raise httpx.ConnectError("x")
+            embed._queries.clear()
+            with patch("embed._embed", broken):
+                self.assertEqual(asyncio.run(search("기준값으로 나누기")), [2, 1, 3])
+        # 데모 모드(키 없음)에서는 임베딩을 쓰지 않는다.
+        with patch.dict(os.environ, {"DEMO_MODE": "1"}):
+            self.assertFalse(embed.enabled())
+        with patch.dict(os.environ, {"DEMO_MODE": "0", "OPENAI_API_KEY": "k", "OPENAI_EMBEDDING_MODEL": "off"}):
+            self.assertFalse(embed.enabled())
+        long = "가" * 3000
+        self.assertEqual([s for s, _ in embed.chunks(long)], [0, 1000, 2000])
+
+    def test_dates_follow_korean_time(self):
+        import datetime as dt
+        import db as dbmod
+
+        class Clock(dt.datetime):
+            now_utc = dt.datetime(2026, 11, 26, 20, 30, tzinfo=dt.timezone.utc)  # 한국은 11월 27일 새벽 5시 반
+
+            @classmethod
+            def now(cls, tz=None):
+                return cls.now_utc.astimezone(tz) if tz else cls.now_utc.replace(tzinfo=None)
+
+        with patch.object(dbmod, "datetime", Clock):
+            self.assertEqual(dbmod.today(), dt.date(2026, 11, 27))
+            with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {
+                    "DATABASE_PATH": os.path.join(folder, "test.sqlite3"), "DEMO_MODE": "1"}):
+                client = make_client()
+                sid = client.post("/studies", data={"title": "날짜", "weeks": "2", "member_count": "2"}).json()["id"]
+                self.assertEqual(client.get(f"/studies/{sid}").json()["weeks"][0]["meeting_date"], "2026-11-27")
+                one = client.post(f"/studies/{sid}/room").json()["session"]["id"]
+                client.post(f"/sessions/{one}/question")
+                client.post(f"/sessions/{one}/answer", json={"text": "날짜를 확인해요."})
+                Clock.now_utc = dt.datetime(2026, 12, 3, 16, 0, tzinfo=dt.timezone.utc)  # 한국은 12월 4일 새벽 1시
+                self.assertEqual(client.post(f"/sessions/{one}/finish", json={}).status_code, 200)
+                self.assertEqual(client.get(f"/studies/{sid}").json()["weeks"][1]["meeting_date"], "2026-12-04")
 
     def test_no_question_request_never_fails(self):
         from common import wants_no_questions

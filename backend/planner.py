@@ -9,6 +9,7 @@ from datetime import date, timedelta
 
 import guard
 from ai import demo_mode, generate_json
+from db import today
 
 KEYWORDS = ("미루", "연기", "늦추", "당기", "앞당", "바꾸", "바꿔", "변경", "일정", "계획",
             "주당", "시간", "주 더", "주 추가", "주 늘", "다시 짜", "재조정",
@@ -188,7 +189,7 @@ async def apply(db, study: dict, cmd: dict, current_week: int) -> str:
             return say("그런 날짜는 없는데? 몇 월 며칠인지 다시 말해 줘.", "그런 날짜는 없어요. 몇 월 며칠인지 다시 알려 주세요.")
         if abs(delta) > 180:
             return say("일정은 한 번에 반년 안에서만 옮길 수 있어.", "일정은 한 번에 반년 안에서만 옮길 수 있어요.")
-        if old + timedelta(days=delta) < date.today() - timedelta(days=1):
+        if old + timedelta(days=delta) < today() - timedelta(days=1):
             return say("지난 날짜로는 못 옮겨. 다른 날로 말해 줘.", "지난 날짜로는 옮길 수 없어요.")
         if delta == 0:
             return say(f"{target}주차 모임 이미 {_fmt(week['meeting_date'])}이야.", f"{target}주차 모임은 이미 {_fmt(week['meeting_date'])}이에요.")

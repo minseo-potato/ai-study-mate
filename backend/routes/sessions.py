@@ -9,7 +9,7 @@ import guard
 from auth import current_user
 import planner
 import scenes
-from db import connect, dumps, loads
+from db import connect, dumps, loads, today
 from common import add_file_message, old_presentation_week, build_qa, clean_speech, last_talk, peer_context, read_file, session_files, clean_list, learning_messages, qa_stats, required, session_data, source_pages, study_data, wants_no_questions
 from routes.records import resolve_review
 
@@ -67,7 +67,7 @@ async def continue_talk(session_id: int):
         week = study["weeks"][session["week_no"] - 1]
         talk = session["messages"]
         said = next((m["body"] for m in reversed(talk) if m["role"] == "user"), study["goal"])
-        pages = source_pages(db, session["study_id"], week["scope"], said, session["week_no"], len(study["weeks"]))
+        pages = await source_pages(db, session["study_id"], week["scope"], said, session["week_no"], len(study["weeks"]))
         files = session_files(db, session_id, query=said)
     no_questions = wants_no_questions(peer_context(study, talk))
     if no_questions and plan[0]["kind"] in scenes.ASKING | {"ask_peer"}:
@@ -263,7 +263,7 @@ async def evaluate(session_id: int):
         # 방을 만들 때 올린 교안은 발표 자료가 아니라 참고 자료다.
         if not spoken and not any(m["role"] == "user_file" for m in session["messages"]):
             raise HTTPException(400, "발표 내용을 채팅으로 쓰거나 파일을 올려 주세요.")
-        pages = source_pages(db, session["study_id"], "", " ".join(spoken)[:4000] or study["goal"])
+        pages = await source_pages(db, session["study_id"], "", " ".join(spoken)[:4000] or study["goal"])
         past = [{"week_no": r["week_no"], "minutes": {k: v for k, v in json.loads(r["minutes"]).items()
                                                       if k in ("summary", "keywords", "learned", "gaps")}}
                 for r in db.execute("SELECT week_no,minutes FROM sessions WHERE study_id=? AND status='finished' "
@@ -368,7 +368,7 @@ async def next_question(session_id: int):
         question_count = sum(m["role"] == "assistant" for m in session["messages"])
         review_focus = (week["review"][0] if week["include_previous_questions"] and
                         session["week_no"] > 1 and question_count == 0 and week["review"] else "")
-        pages = source_pages(db, session["study_id"], week["scope"],
+        pages = await source_pages(db, session["study_id"], week["scope"],
                              session["initial_note"] or study["goal"], session["week_no"], len(study["weeks"]))
         previous_context, previous_pages = [], []
         if week["include_previous_questions"]:
@@ -380,8 +380,8 @@ async def next_question(session_id: int):
                                     (session["study_id"], session["week_no"]))]
             seen = {p["page_no"] for p in pages}
             for older in reversed(study["weeks"][:session["week_no"] - 1]):
-                for page in source_pages(db, session["study_id"], older["scope"], study["goal"],
-                                         older["week_no"], len(study["weeks"]))[:1]:
+                for page in (await source_pages(db, session["study_id"], older["scope"], study["goal"],
+                                                older["week_no"], len(study["weeks"])))[:1]:
                     if page["page_no"] not in seen and len(previous_pages) < 3:
                         previous_pages.append(page)
                         seen.add(page["page_no"])
@@ -439,11 +439,11 @@ async def explain(session_id: int):
             raise HTTPException(409, "설명을 요청할 질문이 없습니다.")
         study = study_data(db, session["study_id"])
         week = study["weeks"][session["week_no"] - 1]
-        pages = source_pages(db, session["study_id"], week["scope"], question["body"],
+        pages = await source_pages(db, session["study_id"], week["scope"], question["body"],
                              session["week_no"], len(study["weeks"]))
         if week["include_previous_questions"] and question["page_no"] not in {p["page_no"] for p in pages}:
             older = [p for w in study["weeks"][:session["week_no"] - 1]
-                     for p in source_pages(db, session["study_id"], w["scope"], question["body"],
+                     for p in await source_pages(db, session["study_id"], w["scope"], question["body"],
                                            w["week_no"], len(study["weeks"]))]
             pages = (pages + [p for p in older if p["page_no"] == question["page_no"]])[:4]
     result = await agents.speak(
@@ -526,7 +526,7 @@ async def answer(session_id: int, body: Answer):
     with connect() as db:
         week = study["weeks"][session["week_no"] - 1]
         asked_back = "?" in text or "？" in text or not question
-        pages = source_pages(db, session["study_id"], week["scope"], text if asked_back else question["body"] + " " + text,
+        pages = await source_pages(db, session["study_id"], week["scope"], text if asked_back else question["body"] + " " + text,
                              session["week_no"], len(study["weeks"]))
         if question and question["page_no"] is not None and question["page_no"] not in {p["page_no"] for p in pages}:
             cited = db.execute("SELECT page_no,body FROM pages WHERE study_id=? AND page_no=?",
@@ -660,6 +660,9 @@ async def finish(session_id: int, body: Finish, background: BackgroundTasks):
                        (learned[-500:], session["study_id"], member["member_no"]))
         db.execute("UPDATE weeks SET status='complete',progress_percent=100,remaining_scope='' WHERE study_id=? AND week_no=?",
                    (session["study_id"], session["week_no"]))
+        # 다음 주차로 넘어간 날을 그 주차의 날짜로 둔다.
+        db.execute("UPDATE weeks SET meeting_date=? WHERE study_id=? AND week_no=? AND status='planned'",
+                   (today().isoformat(), session["study_id"], session["week_no"] + 1))
         _summarizing.add(session_id)
         background.add_task(summarize, session_id)
         return session_data(db, session_id)
@@ -695,7 +698,7 @@ async def summarize(session_id: int):
             talk = learning_messages(session["messages"])
             last_user_note = next((m["body"] for m in reversed(talk) if m["role"] == "user"), "")
             learned_source = session["revised_note"].strip() or last_user_note or session["initial_note"] or study["goal"]
-            pages = source_pages(db, session["study_id"], week["scope"], learned_source,
+            pages = await source_pages(db, session["study_id"], week["scope"], learned_source,
                                  session["week_no"], len(study["weeks"]))
             pending = list(session["unanswered"])
             qa = build_qa(talk)

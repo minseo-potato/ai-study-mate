@@ -11,6 +11,7 @@ from html import unescape
 from fastapi import HTTPException, UploadFile
 import pypdfium2
 from pypdf import PdfReader
+import embed
 import guard
 import ocr
 from db import loads, obj
@@ -247,10 +248,35 @@ def _office_pages(data: bytes, kind: str) -> list[str]:
         for name in names:
             raw = archive.read(name).decode("utf-8", "replace")
             folder, leaf = name.rsplit("/", 1)
-            xml = re.sub(r"</(?:w|a):p>|<w:br\b[^>]*/>", "\n", raw)
-            text = unescape(re.sub(r"<[^>]+>", "", xml)).strip()
-            pages.append("\n".join([text] + _embedded(archive, raw, f"{folder}/_rels/{leaf}.rels", folder, left)).strip())
+            rels = f"{folder}/_rels/{leaf}.rels"
+            parts = [_xml_text(raw)] + _embedded(archive, raw, rels, folder, left)
+            if kind == "pptx":
+                notes = _slide_notes(archive, rels)
+                if notes:
+                    parts.append(f"[발표자 메모] {notes}")
+            pages.append("\n".join(p for p in parts if p).strip())
     return pages
+
+
+def _xml_text(raw: str) -> str:
+    """문서 XML에서 글만 남긴다. 표 서식 번호나 쪽 번호 칸처럼 글이 아닌 값은 뺀다."""
+    raw = re.sub(r"<a:tableStyleId>.*?</a:tableStyleId>|<a:fld\b[^>]*>.*?</a:fld>", "", raw, flags=re.S)
+    xml = re.sub(r"</(?:w|a):p>|<w:br\b[^>]*/>|<a:br\b[^>]*/>", "\n", raw)
+    return re.sub(r"\n\s*\n+", "\n", unescape(re.sub(r"<[^>]+>", "", xml))).strip()
+
+
+def _slide_notes(archive, rels: str) -> str:
+    """슬라이드에 달린 발표자 메모의 본문 칸 글."""
+    if rels not in archive.namelist():
+        return ""
+    found = re.search(r'Target="(?:\.\./notesSlides/|/ppt/notesSlides/)(notesSlide\d+\.xml)"', archive.read(rels).decode("utf-8", "replace"))
+    path = f"ppt/notesSlides/{found.group(1)}" if found else ""
+    if not path or path not in archive.namelist() or archive.getinfo(path).file_size > 5_000_000:
+        return ""
+    raw = archive.read(path).decode("utf-8", "replace")
+    # 메모 쪽에는 슬라이드 그림·쪽 번호 칸도 있으니 본문(body) 칸만 읽는다.
+    shapes = re.findall(r"<p:sp\b.*?</p:sp>", raw, flags=re.S)
+    return "\n".join(_xml_text(sp) for sp in shapes if re.search(r'<p:ph\b[^>]*type="body"', sp)).strip()
 
 
 def _pdf_pages(data: bytes) -> list[str]:
@@ -435,7 +461,11 @@ def old_presentation_week(db, study_id: int) -> bool:
     return bool(row) and not row["separate_presentation"]
 
 
-def source_pages(db, study_id, scope, note, week_no=None, total_weeks=None):
+async def source_pages(db, study_id, scope, note, week_no=None, total_weeks=None):
+    """이번 주 범위의 교안에서 지금 이야기와 가까운 쪽 3개.
+
+    임베딩이 있으면 뜻이 가까운 정도와 키워드가 겹치는 정도를 섞어 고르고(하이브리드),
+    없거나 쓸 수 없으면 키워드만 본다. db에 쓰다 만 내용이 없을 때 불러야 한다(기다리는 동안 잠그지 않도록)."""
     all_pages = [dict(r) for r in db.execute("SELECT page_no,body FROM pages WHERE study_id=?", (study_id,))]
     match = re.search(r"(\d+)\s*[~\-]\s*(\d+)\s*쪽", scope)
     if match:
@@ -446,6 +476,30 @@ def source_pages(db, study_id, scope, note, week_no=None, total_weeks=None):
         a = min(page_count, math.ceil((week_no - 1) * page_count / total_weeks) + 1) if page_count else 1
         b = max(a, math.ceil(week_no * page_count / total_weeks)) if page_count else 0
         all_pages = [p for p in all_pages if a <= p["page_no"] <= b]
+    all_pages.sort(key=lambda p: p["page_no"])
     terms = set(re.findall(r"[가-힣A-Za-z0-9]{3,}", note.lower()))
-    all_pages.sort(key=lambda p: sum(p["body"].lower().count(t) for t in terms), reverse=True)
-    return [{"page_no": p["page_no"], "text": p["body"][:2500]} for p in all_pages[:3]]
+    # '정렬에서'처럼 조사가 붙은 말도 찾도록 한두 글자 뗀 모양을 함께 본다.
+    terms |= {t[:-n] for t in terms for n in (1, 2) if len(t) - n >= 2 and re.fullmatch(r"[가-힣]+", t)}
+    words = {p["page_no"]: sum(p["body"].lower().count(t) for t in terms) for p in all_pages}
+    stored = embed.vectors(db, study_id, all_pages) if note.strip() and len(all_pages) > 1 else None
+    query = await embed.query_vector(note) if stored is not None else None
+    if query is None:
+        all_pages.sort(key=lambda p: words[p["page_no"]], reverse=True)
+        return [{"page_no": p["page_no"], "text": p["body"][:2500]} for p in all_pages[:3]]
+    # 쪽마다 가장 가까운 조각의 점수를 쓰고, 그 조각이 보이도록 글을 자른다.
+    best = {}
+    for p in all_pages:
+        pieces = stored.get(p["page_no"]) or [(0, None)]
+        best[p["page_no"]] = max(((embed.similarity(query, v) if v is not None else 0.0, start) for start, v in pieces))
+    low, high = min(s for s, _ in best.values()), max(s for s, _ in best.values())
+    top_words = max(words.values()) or 1
+    def score(p):
+        meaning = (best[p["page_no"]][0] - low) / (high - low) if high > low else 0.0
+        return 0.65 * meaning + 0.35 * words[p["page_no"]] / top_words
+    all_pages.sort(key=score, reverse=True)
+    out = []
+    for p in all_pages[:3]:
+        start = best[p["page_no"]][1]
+        begin = 0 if start + embed.CHUNK <= 2500 else max(0, start - 600)
+        out.append({"page_no": p["page_no"], "text": ("…" if begin else "") + p["body"][begin:begin + 2500]})
+    return out

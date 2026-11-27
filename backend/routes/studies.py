@@ -6,9 +6,10 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 import ai
+import embed
 import guard
 from auth import current_user
-from db import connect
+from db import connect, today
 from common import AVATAR_PATTERN, INITIAL_UNDERSTANDING, LEVELS, MEMBER_LEVELS, PEER_NAMES, PERSPECTIVES, add_file_message, clean_speech, read_file, required, study_data
 
 
@@ -114,7 +115,9 @@ async def add_pdf(study_id: int, pdf: UploadFile = File(...)):
         if active:
             add_file_message(db, study_id, active["id"], name, size, pages)
         spread_pages(db, study, start + len(pages), bool(study["pdf_name"]))
-        return study_data(db, study_id)
+        result = study_data(db, study_id)
+    embed.schedule(study_id)
+    return result
 
 
 @router.put("/studies/{study_id}/pdf")
@@ -133,7 +136,9 @@ async def replace_pdf(study_id: int, pdf: UploadFile = File(...)):
         if active:
             add_file_message(db, study_id, active["id"], guard.clean_filename(pdf.filename), size, pages)
         spread_pages(db, study, len(pages), bool(study["pdf_name"]))
-        return study_data(db, study_id)
+        result = study_data(db, study_id)
+    embed.schedule(study_id)
+    return result
 
 
 async def first_plan(title: str, goal: str, weeks: int, pages: list) -> dict:
@@ -155,17 +160,17 @@ async def first_plan(title: str, goal: str, weeks: int, pages: list) -> dict:
 
 @router.post("/studies")
 async def create_study(
-    title: str = Form(...), goal: str = Form(""), start_date: date | None = Form(None),
+    title: str = Form(...), goal: str = Form(""),
     weeks: int = Form(4), hours_per_week: float = Form(3),
     member_count: int | None = Form(None), rules: str = Form(""),
     member_profiles: str = Form(""),
     pdf: UploadFile | None = File(None),
     user: dict = Depends(current_user),
 ):
-    """주제만 있으면 만들 수 있다. 목표·기간·시작일·스터디원은 비워 두면 기본값을 쓴다."""
+    """주제만 있으면 만들 수 있다. 목표·기간·스터디원은 비워 두면 기본값을 쓴다. 시작일은 만든 날이다."""
     title = guard.clean_label(title, 120)
     goal = guard.clean_label(goal, 300) or title
-    start_date = start_date or date.today()
+    start_date = today()
     if not title:
         raise HTTPException(400, "학습 주제를 입력해 주세요.")
     if guard.is_trick(title) or guard.is_trick(goal):
@@ -206,7 +211,8 @@ async def create_study(
             week_title = str(plan.get("title") or f"{number}주차")[:120]
             # 교안이 있으면 쪽 범위를 지켜 근거 쪽을 정확히 고른다.
             scope = (f"{first}~{last}쪽" if pages and first <= last else str(plan.get("scope") or goal))[:300]
-            meeting = start_date + timedelta(days=number * 7 - 1)
+            # 1주차는 만든 날. 다음 주차들은 앞 주차를 마친 날로 바뀐다(sessions.finish).
+            meeting = start_date + timedelta(days=(number - 1) * 7)
             db.execute("INSERT INTO weeks(study_id,week_no,title,scope,meeting_date) VALUES(?,?,?,?,?)",
                        (study_id, number, week_title, scope, meeting.isoformat()))
         for number in range(1, member_count + 1):
@@ -221,7 +227,10 @@ async def create_study(
                         profile.get("level", LEVELS[role]),
                         (profile.get("understanding") or INITIAL_UNDERSTANDING[role]).strip(), avatar,
                         notes[number - 1] if profiles else ""))
-        return study_data(db, study_id)
+        result = study_data(db, study_id)
+    if pages:
+        embed.schedule(study_id)  # 교안 임베딩은 뒤에서 만든다. 다 될 때까지는 키워드로 찾는다.
+    return result
 
 
 class Preferences(BaseModel):
@@ -318,7 +327,7 @@ def delete_study(study_id: int):
     """스터디와 대화·기록을 모두 지운다."""
     with connect() as db:
         db.execute("DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE study_id=?)", (study_id,))
-        for table in ("attachments", "sessions", "weeks", "members", "pages", "page_history", "review_items"):
+        for table in ("attachments", "sessions", "weeks", "members", "pages", "page_vectors", "page_history", "review_items"):
             db.execute(f"DELETE FROM {table} WHERE study_id=?", (study_id,))
         db.execute("DELETE FROM studies WHERE id=?", (study_id,))
         return {"ok": True}

@@ -3,6 +3,15 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
+
+# 날짜는 서버 컴퓨터의 시간대와 상관없이 한국 시간으로 기록한다(한국은 서머타임이 없다).
+KST = timezone(timedelta(hours=9), "KST")
+
+
+def today() -> date:
+    """한국 시간 기준 오늘 날짜."""
+    return datetime.now(KST).date()
 
 
 SCHEMA = """
@@ -16,6 +25,12 @@ CREATE TABLE IF NOT EXISTS studies (
 CREATE TABLE IF NOT EXISTS pages (
  study_id INTEGER NOT NULL, page_no INTEGER NOT NULL, body TEXT NOT NULL,
  PRIMARY KEY(study_id,page_no)
+);
+-- 교안 쪽을 조각낸 임베딩. page_hash가 지금 쪽 내용과 다르면 옛 조각이라 쓰지 않는다.
+CREATE TABLE IF NOT EXISTS page_vectors (
+ study_id INTEGER NOT NULL, page_no INTEGER NOT NULL, start INTEGER NOT NULL,
+ page_hash TEXT NOT NULL, model TEXT NOT NULL, vector BLOB NOT NULL,
+ PRIMARY KEY(study_id,page_no,start,page_hash,model)
 );
 CREATE TABLE IF NOT EXISTS page_history (
  study_id INTEGER NOT NULL, pdf_version INTEGER NOT NULL, page_no INTEGER NOT NULL,
