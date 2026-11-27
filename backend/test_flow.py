@@ -829,12 +829,18 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(client.post(f"/sessions/{two}/evaluate").status_code, 400)
             said = client.post(f"/sessions/{two}/answer", json={"text": "정렬은 순서를 기준에 맞춰 놓는 일입니다. 버블 정렬은 이웃한 두 값을 비교하며 자리를 바꿉니다."}).json()
             self.assertEqual(said["messages"][-1]["role"], "user")
+            # 발표 속 긴 글에 '토큰', '모델', '시스템 프롬프트' 같은 말이 나와도 딴소리로 받아치지 않고 발표로 쌓는다.
+            long_talk = ("정렬을 언어 모델에 응용하면, 모델은 입력을 토큰으로 나눈 뒤 점수 순서로 정렬해 다음 토큰을 고릅니다. "
+                         "시스템 프롬프트를 보여 주는 예시처럼 JSON 출력도 순서가 중요합니다. 너희 모델이 어떻게 정렬하는지도 비교해 봤어요.")
+            stacked = client.post(f"/sessions/{two}/answer", json={"text": long_talk}).json()
+            self.assertEqual((stacked["messages"][-1]["role"], stacked["messages"][-1]["body"]), ("user", long_talk))
             client.post(f"/sessions/{two}/answer", json={"text": "잠깐 쉬어도 돼요?"})
-            self.assertEqual(len(client.post(f"/sessions/{two}/question").json()["messages"]), 4)
+            self.assertEqual(len(client.post(f"/sessions/{two}/question").json()["messages"]), 5)
             client.post(f"/sessions/{two}/files", files={"file": ("발표.txt", "발표 자료".encode(), "text/plain")})
             done = client.post(f"/sessions/{two}/evaluate")
             self.assertEqual(done.status_code, 200, done.text)
-            self.assertEqual(len(seen["evaluate"]["presentation"]), 1)
+            self.assertEqual(len(seen["evaluate"]["presentation"]), 2)
+            self.assertEqual(seen["evaluate"]["presentation"][1], long_talk)
             self.assertEqual(seen["evaluate"]["attached_files"][0]["name"], "발표.txt")
             self.assertEqual([m["body"] for m in done.json()["messages"][-2:]], ["흐름이 좋았어요.", "순서대로 설명했다."])
             card = done.json()["messages"][-1]

@@ -160,7 +160,7 @@ def view(messages: list, member_no: int, study: dict) -> list:
         body = m["body"]
         if m["role"] == "user_file":
             body = f"(파일을 올림: {body})"
-        elif mine and len(body) < 600 and guard.is_trick(body):
+        elif guard.hides(m):
             body = guard.HIDDEN
         who = (study["user_name"] or "친구") if mine else "나" if m["member_no"] == member_no else names.get(m["member_no"], "다른 친구")
         out.append({"who": who, "body": guard.quote(body, people)})

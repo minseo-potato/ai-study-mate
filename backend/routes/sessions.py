@@ -21,7 +21,7 @@ def brief(messages: list) -> list:
     """AI에게 넘길 대화. 화면용 정보는 빼고 누가 무슨 말을 했는지만 남긴다."""
     return [{"role": m["role"], "member_no": m["member_no"], "speaker": m["speaker"],
              "body": f"(파일 첨부: {m['body']})" if m["role"] == "user_file" else
-             guard.HIDDEN if m["role"] == "user" and len(m["body"]) < 600 and guard.is_trick(m["body"]) else m["body"]} for m in messages]
+             guard.HIDDEN if guard.hides(m) else m["body"]} for m in messages]
 
 
 def member_of(study: dict, number) -> dict:
@@ -95,7 +95,7 @@ async def continue_talk(session_id: int):
 def presented(messages: list) -> list:
     """발표로 볼 사용자의 말(일정 변경 요청과 친구에게 되물은 말은 뺀다)."""
     talk = learning_messages(messages)
-    return [m["body"] for i, m in enumerate(talk) if m["role"] == "user" and not (len(m["body"]) < 600 and guard.is_trick(m["body"])) and not (
+    return [m["body"] for i, m in enumerate(talk) if m["role"] == "user" and not guard.hides(m) and not (
         i + 1 < len(talk) and talk[i + 1]["role"] in ("assistant", "assistant_reaction"))]
 
 
@@ -483,10 +483,14 @@ async def answer(session_id: int, body: Answer):
         study = study_data(db, session["study_id"])
         files = session_files(db, session_id, query=text)
     topic = " ".join([study["title"], study["goal"]] + [f"{w['title']} {w['scope']}" for w in study["weeks"]])
-    # 공격 문장이거나, 이 스터디에서는 쓸 일이 없는 말(지시문·프롬프트·JSON·모델 등)이면 딴소리로 넘긴다.
-    trick = len(text) < 600 and (guard.is_trick(text) or guard.off_study(text, topic))
     last = last_talk(session["messages"])
     presenting = session["presentation"] and not session["evaluated"] and not (last and last["review_id"])
+    # 발표 중에 쓴 긴 글은 AI가 바로 답하지 않고 쌓아 두기만 하므로 딴소리 판별을 하지 않는다.
+    # (발표에는 '모델', '토큰', '시스템'처럼 걸리기 쉬운 말이 자연스럽게 나와 잘못 걸리곤 했다.
+    #  평가 프롬프트가 발표 속 명령을 따르지 않도록 따로 막는다.)
+    speech = presenting and len(text) >= 40 and not (len(text) < 80 and text.endswith(("?", "？")))
+    # 공격 문장이거나, 이 스터디에서는 쓸 일이 없는 말(지시문·프롬프트·JSON·모델 등)이면 딴소리로 넘긴다.
+    trick = not speech and len(text) < 600 and (guard.is_trick(text) or guard.off_study(text, topic))
     if trick:
         command = None  # 진행 방식을 바꾸는 요청으로도 다루지 않는다.
     elif presenting and not (len(text) < 80 and text.endswith(("?", "？"))):
@@ -495,7 +499,8 @@ async def answer(session_id: int, body: Answer):
             if len(text) < 40 else None
         if not command:
             with connect() as db:
-                db.execute("INSERT INTO messages(session_id,role,body) VALUES(?,?,?)", (session_id, "user", text))
+                db.execute("INSERT INTO messages(session_id,role,body,data) VALUES(?,?,?,?)",
+                           (session_id, "user", text, dumps({"presented": True}) if speech else None))
                 return session_data(db, session_id)
     else:
         command = await planner.parse(text, session["week_no"], len(study["weeks"]), study["weeks"], study["members"]) \

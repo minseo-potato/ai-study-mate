@@ -91,6 +91,13 @@ def is_trick(text: str) -> bool:
     return bool(_TRICK.search(flat) or _TRICK.search(re.sub(r"(?<=[가-힣])[\s._\-*|]+(?=[가-힣])", "", flat))) if flat else False
 
 
+def hides(message: dict) -> bool:
+    """대화 기록에서 '엉뚱한 소리'로 가릴 사용자의 말인지. 발표로 받아 둔 말은 가리지 않는다."""
+    body = str(message.get("body") or "")
+    return (message.get("role") == "user" and len(body) < 600 and not (message.get("data") or {}).get("presented")
+            and is_trick(body))
+
+
 def leaked(text: str) -> bool:
     return bool(_LEAK.search(normalize(text)))
 
